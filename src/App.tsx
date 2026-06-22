@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Database, Layers, ScrollText } from "lucide-react";
+import { Database, ScrollText } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import TabBar from "./components/TabBar";
@@ -68,7 +68,7 @@ export default function App() {
           onClick={() => openUrl("https://iceql.com")}
           title="iceql.com"
         >
-          <Layers size={18} className="text-highlight flex-shrink-0" />
+          <img src="/icon.png" alt="iceql" className="w-5 h-5 flex-shrink-0 rounded" />
           <div className="flex flex-col min-w-0">
             <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">iceql</span>
             <span className="text-[10px] text-text-secondary leading-tight truncate">The cool way to manage your database</span>
