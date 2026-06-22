@@ -1,0 +1,218 @@
+import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { v4 as uuidv4 } from "uuid";
+import { X, Database, Loader2 } from "lucide-react";
+import type { ConnectionConfig, DbType } from "../types";
+
+interface Props {
+  initial?: ConnectionConfig;
+  onSave: (config: ConnectionConfig) => void;
+  onClose: () => void;
+}
+
+const DEFAULTS: Record<DbType, Partial<ConnectionConfig>> = {
+  postgresql: { host: "localhost", port: 5432, username: "postgres", database: "postgres" },
+  mysql: { host: "localhost", port: 3306, username: "root", database: "" },
+  sqlite: { host: "", port: 0, username: "", database: "" },
+};
+
+export default function AddConnectionModal({ initial, onSave, onClose }: Props) {
+  const [form, setForm] = useState<ConnectionConfig>(
+    initial ?? {
+      id: uuidv4(),
+      name: "",
+      db_type: "postgresql",
+      host: "localhost",
+      port: 5432,
+      username: "postgres",
+      password: "",
+      database: "postgres",
+      filename: "",
+    }
+  );
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const set = (k: keyof ConnectionConfig, v: unknown) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setTestResult(null);
+  };
+
+  const changeType = (t: DbType) => {
+    const defs = DEFAULTS[t];
+    setForm((f) => ({
+      ...f,
+      db_type: t,
+      host: defs.host ?? f.host,
+      port: defs.port ?? f.port,
+      username: defs.username ?? f.username,
+      database: defs.database ?? f.database,
+    }));
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      await invoke("test_connection", { config: form });
+      setTestResult({ ok: true, msg: "Connection successful!" });
+    } catch (e) {
+      setTestResult({ ok: false, msg: String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const isSqlite = form.db_type === "sqlite";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <div className="flex items-center gap-2 text-text-primary font-semibold text-lg">
+            <Database size={20} className="text-highlight" />
+            {initial ? "Edit Connection" : "New Connection"}
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Connection Name */}
+          <div>
+            <label className="block text-text-secondary text-sm mb-1">Connection Name</label>
+            <input
+              className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+              value={form.name}
+              onChange={(e) => set("name", e.target.value)}
+              placeholder="My Database"
+            />
+          </div>
+
+          {/* DB Type */}
+          <div>
+            <label className="block text-text-secondary text-sm mb-1">Database Type</label>
+            <div className="flex gap-2">
+              {(["postgresql", "mysql", "sqlite"] as DbType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => changeType(t)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    form.db_type === t
+                      ? "bg-highlight border-highlight text-white"
+                      : "bg-accent border-border text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {t === "postgresql" ? "PostgreSQL" : t === "mysql" ? "MySQL" : "SQLite"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isSqlite ? (
+            <div>
+              <label className="block text-text-secondary text-sm mb-1">Database File Path</label>
+              <input
+                className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                value={form.filename ?? ""}
+                onChange={(e) => set("filename", e.target.value)}
+                placeholder="/path/to/database.db"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-text-secondary text-sm mb-1">Host</label>
+                  <input
+                    className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                    value={form.host}
+                    onChange={(e) => set("host", e.target.value)}
+                    placeholder="localhost"
+                  />
+                </div>
+                <div>
+                  <label className="block text-text-secondary text-sm mb-1">Port</label>
+                  <input
+                    type="number"
+                    className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                    value={form.port}
+                    onChange={(e) => set("port", parseInt(e.target.value) || 0)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-text-secondary text-sm mb-1">Username</label>
+                  <input
+                    className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                    value={form.username}
+                    onChange={(e) => set("username", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-text-secondary text-sm mb-1">Password</label>
+                  <input
+                    type="password"
+                    className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                    value={form.password}
+                    onChange={(e) => set("password", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-text-secondary text-sm mb-1">Database</label>
+                <input
+                  className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                  value={form.database}
+                  onChange={(e) => set("database", e.target.value)}
+                  placeholder="postgres"
+                />
+              </div>
+            </>
+          )}
+
+          {testResult && (
+            <div
+              className={`rounded-lg px-3 py-2 text-sm ${
+                testResult.ok
+                  ? "bg-green-900/40 text-green-400 border border-green-800"
+                  : "bg-red-900/40 text-red-400 border border-red-800"
+              }`}
+            >
+              {testResult.msg}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 px-6 pb-6">
+          <button
+            onClick={testConnection}
+            disabled={testing}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+          >
+            {testing ? <Loader2 size={14} className="animate-spin" /> : null}
+            Test Connection
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-text-muted hover:text-text-primary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave(form)}
+            disabled={!form.name}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
