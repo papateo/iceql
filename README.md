@@ -1,93 +1,101 @@
-# iceql
+# iceql.com
 
+> **The cool way to manage your database**
 
+A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired by TablePlus, with an icy blue dark theme.
 
-## Getting started
+## Features
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- **Multi-database support** — PostgreSQL, MySQL/MariaDB, SQLite
+- **Connection manager** — save, edit, and delete named connections
+- **Database tree** — browse connections → databases → tables → columns
+- **Table data viewer** — paginated browsing with row numbers
+- **Inline editing** — double-click any cell to edit; Commit / Revert buttons appear when changes are pending
+- **SQL editor** — CodeMirror 6 with SQL syntax highlighting, run with `Cmd+Enter`
+- **Multi-tab** — open multiple tables and query editors simultaneously
+- **SQL query logs** — resizable side panel showing every executed query with status, duration, and error details
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Tech Stack
 
-## Add your files
+| Layer | Technology |
+|---|---|
+| Desktop shell | Tauri 2.x (Rust) |
+| Frontend | React 18 + TypeScript + Vite |
+| Styling | Tailwind CSS 3 |
+| SQL editor | CodeMirror 6 |
+| Data grid | TanStack Table |
+| Database driver | sqlx (postgres, mysql, sqlite) |
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://rustup.rs/) (stable toolchain)
+- Tauri CLI
+
+```bash
+cargo install tauri-cli
+```
+
+## Getting Started
+
+```bash
+# Clone the repo
+git clone https://REDACTED-INTERNAL-HOST/pde/iceql.git
+cd iceql
+
+# Install frontend dependencies
+npm install
+
+# Run in development mode
+npm run tauri dev
+```
+
+## Build
+
+```bash
+# Production build (outputs installer to src-tauri/target/release/bundle/)
+npm run tauri build
+```
+
+## Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://REDACTED-INTERNAL-HOST/pde/iceql.git
-git branch -M main
-git push -uf origin main
+iceql/
+├── src/                        # React frontend
+│   ├── components/
+│   │   ├── AddConnectionModal.tsx
+│   │   ├── ConnectionsPanel.tsx
+│   │   ├── QueryView.tsx
+│   │   ├── ResultsPanel.tsx
+│   │   ├── SqlEditor.tsx
+│   │   ├── SqlLogPanel.tsx
+│   │   ├── TabBar.tsx
+│   │   └── TableDataView.tsx
+│   ├── store/
+│   │   └── appStore.ts         # Global state (connections, tabs, logs)
+│   └── types/
+│       └── index.ts
+├── src-tauri/                  # Rust backend
+│   ├── src/
+│   │   ├── commands.rs         # Tauri commands
+│   │   ├── db.rs               # Database connection & query logic
+│   │   ├── models.rs           # Shared data types
+│   │   ├── persistence.rs      # Saved connections (JSON)
+│   │   └── lib.rs
+│   ├── capabilities/
+│   │   └── default.json        # Tauri ACL permissions
+│   └── tauri.conf.json
+└── README.md
 ```
 
-## Integrate with your tools
+## Keyboard Shortcuts
 
-* [Set up project integrations](https://REDACTED-INTERNAL-HOST/pde/iceql/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+| Shortcut | Action |
+|---|---|
+| `Cmd+Enter` | Run SQL query |
+| `Enter` / `Tab` | Confirm cell edit |
+| `Escape` | Cancel cell edit |
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT
