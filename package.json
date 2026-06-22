@@ -20,6 +20,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@uiw/codemirror-theme-dracula": "^4.23.10",
     "@uiw/react-codemirror": "^4.23.10",
     "lucide-react": "^0.474.0",
