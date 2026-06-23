@@ -19,6 +19,7 @@
     "@codemirror/theme-one-dark": "^6.1.2",
     "@codemirror/view": "^6.35.3",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.3",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.2.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
