@@ -19,6 +19,23 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .manage(connection_store)
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                let bytes = include_bytes!("../icons/icon.png");
+                let img = image::load_from_memory(bytes)
+                    .map_err(|e| tauri::Error::Anyhow(e.into()))?
+                    .into_rgba8();
+                let width = img.width();
+                let height = img.height();
+                let icon = tauri::image::Image::new_owned(img.into_raw(), width, height);
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_icon(icon)?;
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::test_connection,
             commands::connect,

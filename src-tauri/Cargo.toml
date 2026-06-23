@@ -39,6 +39,7 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 thiserror = "1"
 anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [features]
