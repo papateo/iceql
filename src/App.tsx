@@ -181,7 +181,7 @@ export default function App() {
                 tabId={activeTab.id}
                 query={activeTab.query ?? ""}
                 onQueryChange={(q) => store.updateTabQuery(activeTab.id, q)}
-                onRunQuery={(q) => store.executeQuery(activeTab.connectionId, q)}
+                onRunQuery={(q) => store.executeQuery(activeTab.connectionId, activeTab.database, q)}
               />
             )}
           </div>

@@ -260,19 +260,45 @@ impl ConnectionPool {
         }
     }
 
-    pub async fn execute_query(&self, query: &str) -> Result<QueryResult, String> {
+    pub async fn execute_query_in(&self, database: &str, query: &str) -> Result<QueryResult, String> {
         let start = Instant::now();
-        if is_dml(query) {
-            return match self {
-                ConnectionPool::Postgres(pool, _) => execute_dml_pg(pool, query, start).await,
-                ConnectionPool::MySQL(pool) => execute_dml_mysql(pool, query, start).await,
-                ConnectionPool::SQLite(pool) => execute_dml_sqlite(pool, query, start).await,
-            };
-        }
         match self {
-            ConnectionPool::Postgres(pool, _) => execute_pg(pool, query, start).await,
-            ConnectionPool::MySQL(pool) => execute_mysql(pool, query, start).await,
-            ConnectionPool::SQLite(pool) => execute_sqlite(pool, query, start).await,
+            ConnectionPool::Postgres(pool, config) => {
+                let target_pool;
+                let pool_ref: &sqlx::PgPool = if database == config.database {
+                    pool
+                } else {
+                    let url = format!(
+                        "postgres://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
+                if is_dml(query) {
+                    execute_dml_pg(pool_ref, query, start).await
+                } else {
+                    execute_pg(pool_ref, query, start).await
+                }
+            }
+            ConnectionPool::MySQL(pool) => {
+                if is_dml(query) {
+                    execute_dml_mysql(pool, query, start).await
+                } else {
+                    execute_mysql(pool, query, start).await
+                }
+            }
+            ConnectionPool::SQLite(pool) => {
+                if is_dml(query) {
+                    execute_dml_sqlite(pool, query, start).await
+                } else {
+                    execute_sqlite(pool, query, start).await
+                }
+            }
         }
     }
 
@@ -288,19 +314,34 @@ impl ConnectionPool {
         let data_query;
 
         match self {
-            ConnectionPool::Postgres(pool, _) => {
+            ConnectionPool::Postgres(pool, config) => {
+                let target_pool;
+                let pool_ref: &sqlx::PgPool = if database == config.database {
+                    pool
+                } else {
+                    let url = format!(
+                        "postgres://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
                 count_query = format!("SELECT COUNT(*) FROM public.\"{table}\"");
                 data_query = format!(
                     "SELECT * FROM public.\"{table}\" LIMIT {page_size} OFFSET {offset}"
                 );
                 let start = Instant::now();
                 let count_row = sqlx::query(&count_query)
-                    .fetch_one(pool)
+                    .fetch_one(pool_ref)
                     .await
                     .map_err(|e| e.to_string())?;
                 use sqlx::Row;
                 let total: i64 = count_row.get(0);
-                let mut result = execute_pg(pool, &data_query, start).await?;
+                let mut result = execute_pg(pool_ref, &data_query, start).await?;
                 result.row_count = total as u64;
                 Ok(result)
             }

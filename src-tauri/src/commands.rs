@@ -95,6 +95,7 @@ pub async fn get_columns(
 #[tauri::command]
 pub async fn execute_query(
     connection_id: String,
+    database: String,
     query: String,
     state: tauri::State<'_, ConnectionStore>,
 ) -> Result<QueryResult, String> {
@@ -102,7 +103,7 @@ pub async fn execute_query(
     let pool = store
         .get(&connection_id)
         .ok_or_else(|| "Connection not found".to_string())?;
-    pool.execute_query(&query).await
+    pool.execute_query_in(&database, &query).await
 }
 
 #[tauri::command]

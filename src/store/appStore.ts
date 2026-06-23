@@ -291,12 +291,13 @@ export function useAppStore() {
   );
 
   const executeQuery = useCallback(
-    async (configId: string, query: string): Promise<QueryResult> => {
+    async (configId: string, database: string, query: string): Promise<QueryResult> => {
       const ac = activeConnections.get(configId);
       if (!ac) throw new Error("Not connected");
       try {
         const result = await invoke<QueryResult>("execute_query", {
           connectionId: ac.connectionId,
+          database,
           query,
         });
         addLog({
