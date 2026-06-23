@@ -9,7 +9,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
     let pool = ConnectionPool::connect(&config).await?;
     // Try a simple query to verify the connection is live
     match &pool {
-        ConnectionPool::Postgres(p) => {
+        ConnectionPool::Postgres(p, _) => {
             sqlx::query("SELECT 1")
                 .execute(p)
                 .await

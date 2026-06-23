@@ -4,7 +4,7 @@ use sqlx::TypeInfo;
 use std::time::Instant;
 
 pub enum ConnectionPool {
-    Postgres(sqlx::PgPool),
+    Postgres(sqlx::PgPool, ConnectionConfig),
     MySQL(sqlx::MySqlPool),
     SQLite(sqlx::SqlitePool),
 }
@@ -24,7 +24,7 @@ impl ConnectionPool {
                 let pool = sqlx::PgPool::connect(&url)
                     .await
                     .map_err(|e| format!("PostgreSQL connection failed: {e}"))?;
-                Ok(ConnectionPool::Postgres(pool))
+                Ok(ConnectionPool::Postgres(pool, config.clone()))
             }
             "mysql" => {
                 let url = format!(
@@ -57,7 +57,7 @@ impl ConnectionPool {
 
     pub async fn get_databases(&self) -> Result<Vec<String>, String> {
         match self {
-            ConnectionPool::Postgres(pool) => {
+            ConnectionPool::Postgres(pool, _) => {
                 let rows = sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
                     .fetch_all(pool)
                     .await
@@ -92,14 +92,28 @@ impl ConnectionPool {
 
     pub async fn get_tables(&self, database: &str) -> Result<Vec<TableInfo>, String> {
         match self {
-            ConnectionPool::Postgres(pool) => {
+            ConnectionPool::Postgres(pool, config) => {
+                // PostgreSQL can't switch databases in-session; create a new connection to the target db
+                let target_pool;
+                let pool_ref: &sqlx::PgPool = if database == config.database {
+                    pool
+                } else {
+                    let url = format!(
+                        "postgres://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
                 let rows = sqlx::query(
                     "SELECT table_name, table_type FROM information_schema.tables \
-                     WHERE table_schema = 'public' AND table_catalog = $1 \
-                     ORDER BY table_name",
+                     WHERE table_schema = 'public' ORDER BY table_name",
                 )
-                .bind(database)
-                .fetch_all(pool)
+                .fetch_all(pool_ref)
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(rows
@@ -160,16 +174,30 @@ impl ConnectionPool {
         table: &str,
     ) -> Result<Vec<ColumnInfo>, String> {
         match self {
-            ConnectionPool::Postgres(pool) => {
+            ConnectionPool::Postgres(pool, config) => {
+                let target_pool;
+                let pool_ref: &sqlx::PgPool = if database == config.database {
+                    pool
+                } else {
+                    let url = format!(
+                        "postgres://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
                 let rows = sqlx::query(
                     "SELECT column_name, data_type, is_nullable, column_default \
                      FROM information_schema.columns \
-                     WHERE table_schema = 'public' AND table_catalog = $1 AND table_name = $2 \
+                     WHERE table_schema = 'public' AND table_name = $1 \
                      ORDER BY ordinal_position",
                 )
-                .bind(database)
                 .bind(table)
-                .fetch_all(pool)
+                .fetch_all(pool_ref)
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(rows
@@ -236,13 +264,13 @@ impl ConnectionPool {
         let start = Instant::now();
         if is_dml(query) {
             return match self {
-                ConnectionPool::Postgres(pool) => execute_dml_pg(pool, query, start).await,
+                ConnectionPool::Postgres(pool, _) => execute_dml_pg(pool, query, start).await,
                 ConnectionPool::MySQL(pool) => execute_dml_mysql(pool, query, start).await,
                 ConnectionPool::SQLite(pool) => execute_dml_sqlite(pool, query, start).await,
             };
         }
         match self {
-            ConnectionPool::Postgres(pool) => execute_pg(pool, query, start).await,
+            ConnectionPool::Postgres(pool, _) => execute_pg(pool, query, start).await,
             ConnectionPool::MySQL(pool) => execute_mysql(pool, query, start).await,
             ConnectionPool::SQLite(pool) => execute_sqlite(pool, query, start).await,
         }
@@ -260,7 +288,7 @@ impl ConnectionPool {
         let data_query;
 
         match self {
-            ConnectionPool::Postgres(pool) => {
+            ConnectionPool::Postgres(pool, _) => {
                 count_query = format!("SELECT COUNT(*) FROM public.\"{table}\"");
                 data_query = format!(
                     "SELECT * FROM public.\"{table}\" LIMIT {page_size} OFFSET {offset}"
