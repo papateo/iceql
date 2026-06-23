@@ -68,9 +68,9 @@ export default function App() {
           onClick={() => openUrl("https://iceql.com")}
           title="iceql.com"
         >
-          <img src="/icon.png" alt="iceql" className="w-5 h-5 flex-shrink-0 rounded" />
+          <img src="/icon.png" alt="iceql" className="w-9 h-9 flex-shrink-0 rounded-lg" />
           <div className="flex flex-col min-w-0">
-            <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">iceql</span>
+            <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">IceQL</span>
             <span className="text-[10px] text-text-secondary leading-tight truncate">The cool way to manage your database</span>
           </div>
         </div>
