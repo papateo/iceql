@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronLeft,
@@ -7,6 +7,11 @@ import {
   Loader2,
   Check,
   RotateCcw,
+  ChevronsUpDown,
+  ChevronUp,
+  ChevronDown,
+  X,
+  Search,
 } from "lucide-react";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 
@@ -55,6 +60,11 @@ export default function TableDataView({
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showFilter, setShowFilter] = useState(false);
+
   const ac = activeConnections.get(configId);
   const hasEdits = edits.size > 0;
 
@@ -64,6 +74,8 @@ export default function TableDataView({
     setError(null);
     setEdits(new Map());
     setEditingCell(null);
+    setSortCol(null);
+    setFilters({});
     const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`;
     try {
       const res = await invoke<QueryResult>("get_table_data", {
@@ -213,6 +225,44 @@ export default function TableDataView({
 
   const columns = result?.columns ?? [];
 
+  const handleSortClick = (col: string) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  };
+
+  const clearFilter = (col: string) => {
+    setFilters((prev) => { const n = { ...prev }; delete n[col]; return n; });
+  };
+
+  const displayedRows = useMemo(() => {
+    let r: (Record<string, unknown> & { __idx: number })[] = rows.map((row, idx) => ({ ...row, __idx: idx }));
+    // filter
+    Object.entries(filters).forEach(([col, val]) => {
+      if (!val) return;
+      const lower = val.toLowerCase();
+      r = r.filter((row) => {
+        const v = row[col];
+        if (v === null || v === undefined) return false;
+        return String(v).toLowerCase().includes(lower);
+      });
+    });
+    // sort
+    if (sortCol) {
+      r = [...r].sort((a, b) => {
+        const av = a[sortCol], bv = b[sortCol];
+        if (av === null || av === undefined) return 1;
+        if (bv === null || bv === undefined) return -1;
+        const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return r;
+  }, [rows, filters, sortCol, sortDir]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -220,6 +270,13 @@ export default function TableDataView({
         <span className="text-text-secondary text-xs font-mono">
           {database}.<span className="text-text-primary">{table}</span>
         </span>
+        <button
+          onClick={() => setShowFilter((v) => !v)}
+          className={`p-1.5 rounded transition-colors ${showFilter ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent hover:text-text-primary"}`}
+          title="Toggle filter row"
+        >
+          <Search size={13} />
+        </button>
         <div className="flex-1" />
         {result && !hasEdits && (
           <span className="text-text-muted text-xs">
@@ -279,21 +336,58 @@ export default function TableDataView({
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-accent border-b border-border">
-                <th className="px-2 py-2 text-left text-text-muted font-medium w-10 border-r border-border select-none">
-                  #
-                </th>
-                {columns.map((col) => (
-                  <th
-                    key={col}
-                    className="px-3 py-2 text-left text-text-secondary font-medium whitespace-nowrap border-r border-border last:border-r-0 select-none"
-                  >
-                    {col}
-                  </th>
-                ))}
+                <th className="px-2 py-2 text-left text-text-muted font-medium w-10 border-r border-border select-none">#</th>
+                {columns.map((col) => {
+                  const isSorted = sortCol === col;
+                  return (
+                    <th
+                      key={col}
+                      className="px-3 py-2 text-left text-text-secondary font-medium whitespace-nowrap border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group"
+                      onClick={() => handleSortClick(col)}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className={isSorted ? "text-highlight" : ""}>{col}</span>
+                        {isSorted ? (
+                          sortDir === "asc" ? <ChevronUp size={11} className="text-highlight" /> : <ChevronDown size={11} className="text-highlight" />
+                        ) : (
+                          <ChevronsUpDown size={11} className="opacity-0 group-hover:opacity-40 transition-opacity" />
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
+              {showFilter && (
+                <tr className="bg-sidebar border-b border-border">
+                  <td className="w-10 border-r border-border" />
+                  {columns.map((col) => (
+                    <td key={col} className="px-1 py-1 border-r border-border last:border-r-0">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Filter…"
+                          value={filters[col] ?? ""}
+                          onChange={(e) => setFilters((prev) => ({ ...prev, [col]: e.target.value }))}
+                          className="w-full text-[11px] bg-accent/60 border border-transparent focus:border-border rounded px-2 py-0.5 text-text-secondary placeholder:text-text-muted/40 outline-none focus:bg-accent pr-5"
+                        />
+                        {filters[col] && (
+                          <button
+                            onClick={() => clearFilter(col)}
+                            className="absolute right-1 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              )}
             </thead>
             <tbody>
-              {rows.map((_, rowIdx) => (
+              {displayedRows.map((displayRow, displayIdx) => {
+                const rowIdx = displayRow.__idx;
+                return (
                 <tr
                   key={rowIdx}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors"
@@ -343,14 +437,15 @@ export default function TableDataView({
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
 
-        {!loading && rows.length === 0 && !error && (
+        {!loading && displayedRows.length === 0 && !error && (
           <div className="flex items-center justify-center py-8 text-text-muted text-sm">
-            Table is empty
+            {rows.length === 0 ? "Table is empty" : "No rows match the filter"}
           </div>
         )}
       </div>
