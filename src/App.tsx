@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Database, ScrollText } from "lucide-react";
+import { Database, ScrollText, Settings } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import TabBar from "./components/TabBar";
@@ -8,6 +8,7 @@ import QueryView from "./components/QueryView";
 import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections } from "./store/appStore";
 import type { ActiveConnection } from "./types";
+import SettingsModal, { type AppSettings } from "./components/SettingsModal";
 
 // Build a CodeMirror SQL schema ({ table: [columns] }) from the cached metadata of a connection.
 function buildSqlSchema(
@@ -26,8 +27,23 @@ function buildSqlSchema(
 export default function App() {
   const store = useAppStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try { return JSON.parse(localStorage.getItem("iceql-settings") ?? "{}"); } catch { return {}; }
+  });
+
+  useEffect(() => {
+    const { theme = "dark", fontSize = "md" } = settings;
+    const root = document.documentElement;
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const resolved = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
+    root.setAttribute("data-theme", resolved);
+    const px: Record<string, string> = { sm: "12px", md: "14px", lg: "16px", xl: "18px" };
+    root.style.fontSize = px[fontSize] ?? "14px";
+    localStorage.setItem("iceql-settings", JSON.stringify(settings));
+  }, [settings]);
   const [dragging, setDragging] = useState(false);
-  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
   const [connectError, setConnectError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
@@ -57,14 +73,14 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleConnect = async (config: typeof store.savedConnections[0]) => {
-    setConnectingId(config.id);
+    setConnectingIds((prev) => new Set(prev).add(config.id));
     setConnectError(null);
     try {
       await store.connectToDb(config);
     } catch (e) {
       setConnectError(String(e));
     } finally {
-      setConnectingId(null);
+      setConnectingIds((prev) => { const next = new Set(prev); next.delete(config.id); return next; });
     }
   };
 
@@ -106,16 +122,25 @@ export default function App() {
         style={{ width: sidebarWidth }}
       >
         {/* Logo */}
-        <div
-          className="flex items-center gap-2 px-4 py-3 border-b border-border cursor-pointer hover:bg-accent/40 transition-colors group"
-          onClick={() => openUrl("https://iceql.com")}
-          title="iceql.com"
-        >
-          <img src="/icon.png" alt="iceql" className="w-9 h-9 flex-shrink-0 rounded-lg" />
-          <div className="flex flex-col min-w-0">
-            <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">IceQL</span>
-            <span className="text-[10px] text-text-secondary leading-tight truncate">The cool way to manage your database</span>
+        <div className="flex items-center border-b border-border">
+          <div
+            className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-accent/40 transition-colors group flex-1 min-w-0"
+            onClick={() => openUrl("https://iceql.com")}
+            title="iceql.com"
+          >
+            <img src="/icon.png" alt="iceql" className="w-9 h-9 flex-shrink-0 rounded-lg" />
+            <div className="flex flex-col min-w-0">
+              <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">IceQL</span>
+              <span className="text-[10px] text-text-secondary leading-tight truncate">The cool way to manage your database</span>
+            </div>
           </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 mr-2 rounded hover:bg-accent text-text-muted hover:text-highlight transition-colors flex-shrink-0"
+            title="Settings"
+          >
+            <Settings size={15} />
+          </button>
         </div>
 
         {/* Connection error banner */}
@@ -130,17 +155,11 @@ export default function App() {
             </button>
           </div>
         )}
-        {connectingId && (
-          <div className="mx-2 mt-2 px-2 py-1.5 bg-blue-900/30 border border-blue-800/50 rounded text-blue-300 text-xs flex items-center gap-2">
-            <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            Connecting…
-          </div>
-        )}
-
         <ConnectionsPanel
           savedConnections={store.savedConnections}
           activeConnections={store.activeConnections}
           selectedConnectionId={store.selectedConnectionId}
+          connectingIds={connectingIds}
           onConnect={handleConnect}
           onDisconnect={store.disconnectFromDb}
           onAdd={store.addConnection}
@@ -278,6 +297,13 @@ export default function App() {
           )}
         </div>
       </div>
+      {showSettings && (
+        <SettingsModal
+          settings={{ theme: settings.theme ?? "dark", fontSize: settings.fontSize ?? "md" }}
+          onChange={setSettings}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   );
 }

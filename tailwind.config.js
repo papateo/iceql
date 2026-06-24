@@ -4,16 +4,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#071a2e",
-        sidebar: "#0a2340",
-        accent: "#0e3a6e",
-        highlight: "#38bdf8",
-        surface: "#0d2a45",
-        border: "#1a4060",
+        bg: "var(--color-bg)",
+        sidebar: "var(--color-sidebar)",
+        accent: "var(--color-accent)",
+        highlight: "var(--color-highlight)",
+        surface: "var(--color-surface)",
+        border: "var(--color-border)",
         text: {
-          primary: "#e0f2fe",
-          secondary: "#7dd3fc",
-          muted: "#38607a",
+          primary: "var(--color-text-primary)",
+          secondary: "var(--color-text-secondary)",
+          muted: "var(--color-text-muted)",
         },
       },
     },

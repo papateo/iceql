@@ -19,6 +19,7 @@ interface Props {
   savedConnections: ConnectionConfig[];
   activeConnections: Map<string, ActiveConnection>;
   selectedConnectionId: string | null;
+  connectingIds: Set<string>;
   onConnect: (config: ConnectionConfig) => void;
   onDisconnect: (configId: string) => void;
   onAdd: (config: ConnectionConfig) => void;
@@ -33,6 +34,7 @@ interface Props {
 export default function ConnectionsPanel({
   savedConnections,
   activeConnections,
+  connectingIds,
   onConnect,
   onDisconnect,
   onAdd,
@@ -47,6 +49,15 @@ export default function ConnectionsPanel({
   const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [deletingConn, setDeletingConn] = useState<ConnectionConfig | null>(null);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+
+  const toggleCollapse = (id: string) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const handleSave = (config: ConnectionConfig) => {
     if (editingConn) {
@@ -93,6 +104,8 @@ export default function ConnectionsPanel({
         {savedConnections.map((conn) => {
           const ac = activeConnections.get(conn.id);
           const isConnected = !!ac;
+          const isConnecting = connectingIds.has(conn.id);
+          const isCollapsed = collapsedIds.has(conn.id);
 
           return (
             <div key={conn.id}>
@@ -101,15 +114,32 @@ export default function ConnectionsPanel({
                 className="flex items-center gap-1 px-2 py-1.5 hover:bg-accent/60 group cursor-pointer"
                 onMouseEnter={() => setHoveredId(conn.id)}
                 onMouseLeave={() => setHoveredId(null)}
-                onDoubleClick={() => !isConnected && onConnect(conn)}
+                onDoubleClick={() => !isConnected && !isConnecting && onConnect(conn)}
               >
+                {isConnected ? (
+                  <button
+                    onClick={() => toggleCollapse(conn.id)}
+                    className="text-text-muted flex-shrink-0"
+                  >
+                    {isCollapsed
+                      ? <ChevronRight size={13} />
+                      : <ChevronDown size={13} />}
+                  </button>
+                ) : (
+                  <span className="w-[13px] flex-shrink-0" />
+                )}
                 <Database size={14} className={dbTypeIcon(conn.db_type)} />
                 <span className="flex-1 text-sm text-text-primary truncate ml-1">
                   {conn.name}
                 </span>
 
+                {/* Connecting spinner */}
+                {isConnecting && (
+                  <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                )}
+
                 {/* Action buttons shown on hover */}
-                {hoveredId === conn.id && (
+                {!isConnecting && hoveredId === conn.id && (
                   <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => { setEditingConn(conn); setShowModal(true); }}
@@ -145,13 +175,13 @@ export default function ConnectionsPanel({
                   </div>
                 )}
 
-                {isConnected && hoveredId !== conn.id && (
+                {isConnected && !isConnecting && hoveredId !== conn.id && (
                   <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
                 )}
               </div>
 
               {/* Database tree */}
-              {isConnected && ac.databases.map((dbName) => (
+              {isConnected && !isCollapsed && ac.databases.map((dbName) => (
                 <DatabaseNode
                   key={dbName}
                   dbName={dbName}
