@@ -69,4 +69,5 @@ export interface ActiveConnection {
   dbTables: Record<string, TableInfo[]>;
   expandedTables: Set<string>;
   dbColumns: Record<string, ColumnInfo[]>; // key: db.table
+  dbErrors: Record<string, string>; // key: dbName → error message
 }

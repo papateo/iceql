@@ -313,6 +313,7 @@ function DatabaseNode({
 }) {
   const isExpanded = ac.expandedDbs.has(dbName);
   const tables = ac.dbTables[dbName] ?? [];
+  const dbError = ac.dbErrors?.[dbName];
 
   const q = (sql: string) => onOpenQuery(configId, dbName, sql);
 
@@ -356,7 +357,13 @@ function DatabaseNode({
         </button>
       </div>
 
-      {isExpanded && tables.map((table) => (
+      {isExpanded && dbError && (
+        <div className="pl-10 pr-3 py-1.5 text-[10px] text-red-400 flex items-start gap-1.5">
+          <span className="flex-shrink-0 mt-0.5">⚠</span>
+          <span className="break-all">{dbError}</span>
+        </div>
+      )}
+      {isExpanded && !dbError && tables.map((table) => (
         <TableNode
           key={table.name}
           table={table}

@@ -213,6 +213,7 @@ export function useAppStore() {
         dbTables: {},
         expandedTables: new Set(),
         dbColumns: {},
+        dbErrors: {},
       };
       setActiveConnections((prev) => {
         const next = new Map(prev);
@@ -261,22 +262,40 @@ export function useAppStore() {
       }
 
       if (!ac.dbTables[dbName]) {
-        const tables = await invoke<TableInfo[]>("get_tables", {
-          connectionId: ac.connectionId,
-          database: dbName,
-        });
-        setActiveConnections((prev) => {
-          const next = new Map(prev);
-          const conn = next.get(configId)!;
-          const newExpanded = new Set(conn.expandedDbs);
-          newExpanded.add(dbName);
-          next.set(configId, {
-            ...conn,
-            expandedDbs: newExpanded,
-            dbTables: { ...conn.dbTables, [dbName]: tables },
+        try {
+          console.log("[expandDatabase] invoking get_tables", { connectionId: ac.connectionId, database: dbName });
+          const tables = await invoke<TableInfo[]>("get_tables", {
+            connectionId: ac.connectionId,
+            database: dbName,
           });
-          return next;
-        });
+          console.log("[expandDatabase] got tables", tables);
+          setActiveConnections((prev) => {
+            const next = new Map(prev);
+            const conn = next.get(configId)!;
+            const newExpanded = new Set(conn.expandedDbs);
+            newExpanded.add(dbName);
+            next.set(configId, {
+              ...conn,
+              expandedDbs: newExpanded,
+              dbTables: { ...conn.dbTables, [dbName]: tables },
+            });
+            return next;
+          });
+        } catch (e) {
+          console.error("expandDatabase error:", e);
+          setActiveConnections((prev) => {
+            const next = new Map(prev);
+            const conn = next.get(configId)!;
+            const newExpanded = new Set(conn.expandedDbs);
+            newExpanded.add(dbName);
+            next.set(configId, {
+              ...conn,
+              expandedDbs: newExpanded,
+              dbErrors: { ...conn.dbErrors, [dbName]: String(e) },
+            });
+            return next;
+          });
+        }
       } else {
         setActiveConnections((prev) => {
           const next = new Map(prev);
