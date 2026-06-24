@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import SqlEditor from "./SqlEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { QueryResult } from "../types";
@@ -6,16 +6,28 @@ import type { QueryResult } from "../types";
 interface Props {
   tabId: string;
   query: string;
+  database: string;
+  databases: string[];
+  dbType: string;
+  schema: Record<string, string[]>;
+  onLoadSchema: () => void;
+  onDatabaseChange: (db: string) => void;
   onQueryChange: (q: string) => void;
   onRunQuery: (q: string) => Promise<QueryResult>;
 }
 
-export default function QueryView({ query, onQueryChange, onRunQuery }: Props) {
+export default function QueryView({ query, database, databases, dbType, schema, onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery }: Props) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [editorHeight, setEditorHeight] = useState(240);
   const [dragging, setDragging] = useState(false);
+
+  // Load table/column metadata for the selected database so the editor can autocomplete.
+  useEffect(() => {
+    if (database) onLoadSchema();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [database]);
 
   const runQuery = async (q: string) => {
     if (!q.trim()) return;
@@ -58,6 +70,11 @@ export default function QueryView({ query, onQueryChange, onRunQuery }: Props) {
           onChange={onQueryChange}
           onRun={runQuery}
           running={loading}
+          database={database}
+          databases={databases}
+          dbType={dbType}
+          schema={schema}
+          onDatabaseChange={onDatabaseChange}
         />
       </div>
 

@@ -1,16 +1,28 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useMemo } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { sql } from "@codemirror/lang-sql";
+import { sql, MySQL, PostgreSQL, SQLite, StandardSQL, type SQLDialect } from "@codemirror/lang-sql";
 import { dracula } from "@uiw/codemirror-theme-dracula";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
-import { Play, Loader2 } from "lucide-react";
+import { Play, Loader2, Database } from "lucide-react";
 
 interface Props {
   value: string;
   onChange: (v: string) => void;
   onRun: (query: string) => void;
   running: boolean;
+  database: string;
+  databases: string[];
+  dbType: string;
+  schema: Record<string, string[]>;
+  onDatabaseChange: (db: string) => void;
+}
+
+function dialectFor(dbType: string): SQLDialect {
+  if (dbType === "postgresql") return PostgreSQL;
+  if (dbType === "sqlite") return SQLite;
+  if (dbType === "mysql") return MySQL;
+  return StandardSQL;
 }
 
 const customTheme = EditorView.theme({
@@ -42,8 +54,19 @@ const customTheme = EditorView.theme({
   },
 });
 
-export default function SqlEditor({ value, onChange, onRun, running }: Props) {
+export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, onDatabaseChange }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
+
+  // Rebuild the SQL language extension only when the dialect or schema *content* changes
+  // (the schema object is rebuilt on every render, so compare by a stable content key).
+  const schemaKey = Object.entries(schema)
+    .map(([t, cols]) => `${t}:${cols.length}`)
+    .join(",");
+  const sqlExtension = useMemo(
+    () => sql({ dialect: dialectFor(dbType), schema, upperCaseKeywords: false }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dbType, schemaKey]
+  );
 
   const getSelectedOrAll = useCallback(() => {
     const view = (editorRef.current as unknown as { view?: EditorView })?.view;
@@ -72,14 +95,33 @@ export default function SqlEditor({ value, onChange, onRun, running }: Props) {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-sidebar">
         <span className="text-text-muted text-xs">SQL Editor — Cmd+Enter to run</span>
-        <button
-          onClick={() => onRun(getSelectedOrAll())}
-          disabled={running}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
-        >
-          {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-          Run
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative flex items-center">
+            <Database size={13} className="absolute left-2 text-text-muted pointer-events-none" />
+            <select
+              value={database}
+              onChange={(e) => onDatabaseChange(e.target.value)}
+              title="Select database"
+              className="appearance-none bg-accent/60 border border-border rounded-lg text-xs text-text-secondary pl-7 pr-6 py-1.5 outline-none focus:border-highlight hover:bg-accent transition-colors cursor-pointer"
+            >
+              {database === "" && <option value="">Select database…</option>}
+              {databases.map((db) => (
+                <option key={db} value={db}>{db}</option>
+              ))}
+            </select>
+            <svg className="absolute right-2 w-3 h-3 text-text-muted pointer-events-none" viewBox="0 0 12 12" fill="none">
+              <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <button
+            onClick={() => onRun(getSelectedOrAll())}
+            disabled={running}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
+          >
+            {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+            Run
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-hidden">
         <CodeMirror
@@ -87,7 +129,7 @@ export default function SqlEditor({ value, onChange, onRun, running }: Props) {
           value={value}
           onChange={onChange}
           theme={dracula}
-          extensions={[sql(), customTheme, runExtension]}
+          extensions={[sqlExtension, customTheme, runExtension]}
           style={{ height: "100%" }}
           basicSetup={{
             lineNumbers: true,

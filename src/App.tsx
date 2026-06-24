@@ -7,6 +7,21 @@ import TableDataView from "./components/TableDataView";
 import QueryView from "./components/QueryView";
 import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections } from "./store/appStore";
+import type { ActiveConnection } from "./types";
+
+// Build a CodeMirror SQL schema ({ table: [columns] }) from the cached metadata of a connection.
+function buildSqlSchema(
+  ac: ActiveConnection | undefined,
+  database: string
+): Record<string, string[]> {
+  if (!ac || !database) return {};
+  const schema: Record<string, string[]> = {};
+  for (const t of ac.dbTables[database] ?? []) {
+    const cols = ac.dbColumns[`${database}.${t.name}`];
+    schema[t.name] = cols ? cols.map((c) => c.name) : [];
+  }
+  return schema;
+}
 
 export default function App() {
   const store = useAppStore();
@@ -217,6 +232,12 @@ export default function App() {
                   <QueryView
                     tabId={tab.id}
                     query={tab.query ?? ""}
+                    database={tab.database}
+                    databases={store.activeConnections.get(tab.connectionId)?.databases ?? []}
+                    dbType={store.activeConnections.get(tab.connectionId)?.config.db_type ?? "mysql"}
+                    schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
+                    onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
+                    onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
                     onRunQuery={(q) => store.executeQuery(tab.connectionId, tab.database, q)}
                   />

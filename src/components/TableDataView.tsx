@@ -92,7 +92,7 @@ export default function TableDataView({
     setFilters({});
     setRows([]);
     setLoadedPages(0);
-    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT ${pageSize} OFFSET 0`;
+    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)} LIMIT ${pageSize} OFFSET 0`;
     try {
       const res = await invoke<QueryResult>("get_table_data", {
         connectionId: ac.connectionId,
@@ -123,7 +123,7 @@ export default function TableDataView({
   const fetchMore = useCallback(async () => {
     if (!ac || loadingMore || !hasMore) return;
     setLoadingMore(true);
-    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT ${pageSize} OFFSET ${loadedPages * pageSize}`;
+    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)} LIMIT ${pageSize} OFFSET ${loadedPages * pageSize}`;
     try {
       const res = await invoke<QueryResult>("get_table_data", {
         connectionId: ac.connectionId,
@@ -191,15 +191,19 @@ export default function TableDataView({
       if (!byRow.has(rowIdx)) byRow.set(rowIdx, {});
       byRow.get(rowIdx)![col] = value;
     });
+    const dbType = ac?.config.db_type;
+    const qi = (name: string) => quoteIdent(dbType, name);
+    // MySQL supports `UPDATE ... LIMIT 1`; Postgres/SQLite do not. The full-row WHERE match keeps it specific.
+    const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
     const sqls: string[] = [];
     byRow.forEach((changes, rowIdx) => {
       const original = rows[rowIdx];
-      const setClauses = Object.entries(changes).map(([col, val]) => `\`${col}\` = ${sqlLiteral(val)}`).join(", ");
+      const setClauses = Object.entries(changes).map(([col, val]) => `${qi(col)} = ${sqlLiteral(val)}`).join(", ");
       const whereClauses = columns.map((col) => {
         const v = original[col];
-        return v === null || v === undefined ? `\`${col}\` IS NULL` : `\`${col}\` = ${sqlLiteral(v)}`;
+        return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;
       }).join(" AND ");
-      sqls.push(`UPDATE \`${database}\`.\`${table}\` SET ${setClauses} WHERE ${whereClauses} LIMIT 1`);
+      sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${whereClauses}${limitClause}`);
     });
     return sqls;
   };
@@ -510,6 +514,19 @@ export default function TableDataView({
       </div>
     </div>
   );
+}
+
+// Quote an identifier per dialect: MySQL/MariaDB use backticks, Postgres/SQLite use double quotes.
+function quoteIdent(dbType: string | undefined, name: string): string {
+  if (dbType === "mysql") return `\`${name}\``;
+  return `"${name}"`;
+}
+
+// Build a table reference. MySQL qualifies with the database (`db`.`table`); Postgres/SQLite
+// connections already target the database, so the table is referenced unqualified.
+function tableRef(dbType: string | undefined, database: string, table: string): string {
+  if (dbType === "mysql") return `${quoteIdent(dbType, database)}.${quoteIdent(dbType, table)}`;
+  return quoteIdent(dbType, table);
 }
 
 function sqlLiteral(value: unknown): string {
