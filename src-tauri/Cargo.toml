@@ -41,6 +41,7 @@ thiserror = "1"
 anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-dialog = "2.7.1"
 
 [features]
 default = ["custom-protocol"]

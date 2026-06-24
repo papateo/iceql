@@ -14,6 +14,10 @@
     "fs:allow-app-read-recursive",
     "fs:allow-app-write-recursive",
     "fs:scope-appdata-recursive",
-    "fs:scope-appconfig-recursive"
+    "fs:scope-appconfig-recursive",
+    "fs:allow-write-text-file",
+    "fs:scope-home-recursive",
+    "dialog:default",
+    "dialog:allow-save"
   ]
 }
