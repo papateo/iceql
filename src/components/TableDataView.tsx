@@ -20,6 +20,10 @@ interface Props {
   table: string;
   activeConnections: Map<string, ActiveConnection>;
   addLog: (log: Omit<QueryLog, "id" | "timestamp">) => void;
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
+  infiniteScroll: boolean;
+  onInfiniteScrollChange: (value: boolean) => void;
 }
 
 interface EditCell {
@@ -47,11 +51,14 @@ export default function TableDataView({
   table,
   activeConnections,
   addLog,
+  pageSize,
+  onPageSizeChange,
+  infiniteScroll,
+  onInfiniteScrollChange,
 }: Props) {
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [pageSize, setPageSize] = useState(100);
   const [loadedPages, setLoadedPages] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -66,7 +73,6 @@ export default function TableDataView({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showFilter, setShowFilter] = useState(false);
-  const [infiniteScroll, setInfiniteScroll] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const ac = activeConnections.get(configId);
@@ -483,7 +489,7 @@ export default function TableDataView({
           <span className="text-text-muted text-xs">Rows:</span>
           <div className="flex items-center gap-0.5">
             {PAGE_SIZE_OPTIONS.map((opt) => (
-              <button key={opt} onClick={() => setPageSize(opt)} className={`px-2 py-0.5 rounded text-xs transition-colors ${pageSize === opt ? "bg-highlight text-bg font-medium" : "text-text-muted hover:text-text-primary hover:bg-accent"}`}>
+              <button key={opt} onClick={() => onPageSizeChange(opt)} className={`px-2 py-0.5 rounded text-xs transition-colors ${pageSize === opt ? "bg-highlight text-bg font-medium" : "text-text-muted hover:text-text-primary hover:bg-accent"}`}>
                 {opt}
               </button>
             ))}
@@ -492,7 +498,7 @@ export default function TableDataView({
 
         {/* Infinite scroll toggle */}
         <button
-          onClick={() => setInfiniteScroll((v) => !v)}
+          onClick={() => onInfiniteScrollChange(!infiniteScroll)}
           className="flex items-center gap-2 text-xs text-text-muted hover:text-text-primary transition-colors"
           title="Toggle infinite scroll"
         >

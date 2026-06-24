@@ -16,6 +16,23 @@ export default function App() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
+  const [tableSettings, setTableSettings] = useState<
+    Record<string, { pageSize: number; infiniteScroll: boolean }>
+  >({});
+
+  const updateTableSetting = (
+    tabId: string,
+    patch: Partial<{ pageSize: number; infiniteScroll: boolean }>
+  ) => {
+    setTableSettings((prev) => ({
+      ...prev,
+      [tabId]: {
+        ...{ pageSize: 100, infiniteScroll: false },
+        ...prev[tabId],
+        ...patch,
+      },
+    }));
+  };
 
   // Load saved connections on mount
   useEffect(() => {
@@ -52,8 +69,6 @@ export default function App() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
-
-  const activeTab = store.tabs.find((t) => t.id === store.activeTabId);
 
   return (
     <div className="flex h-screen bg-bg text-text-primary overflow-hidden select-none">
@@ -152,9 +167,9 @@ export default function App() {
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Tab content */}
-          <div className="flex-1 overflow-hidden">
-            {!activeTab && (
+          {/* Tab content — all open tabs stay mounted so switching back doesn't refetch */}
+          <div className="flex-1 overflow-hidden relative">
+            {store.tabs.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-text-muted gap-4">
                 <Database size={48} className="opacity-20" />
                 <div className="text-center">
@@ -166,24 +181,33 @@ export default function App() {
               </div>
             )}
 
-            {activeTab?.type === "table" && (
-              <TableDataView
-                configId={activeTab.connectionId}
-                database={activeTab.database}
-                table={activeTab.table!}
-                activeConnections={store.activeConnections}
-                addLog={store.addLog}
-              />
-            )}
-
-            {activeTab?.type === "query" && (
-              <QueryView
-                tabId={activeTab.id}
-                query={activeTab.query ?? ""}
-                onQueryChange={(q) => store.updateTabQuery(activeTab.id, q)}
-                onRunQuery={(q) => store.executeQuery(activeTab.connectionId, activeTab.database, q)}
-              />
-            )}
+            {store.tabs.map((tab) => (
+              <div
+                key={tab.id}
+                className={`absolute inset-0 ${tab.id === store.activeTabId ? "" : "hidden"}`}
+              >
+                {tab.type === "table" ? (
+                  <TableDataView
+                    configId={tab.connectionId}
+                    database={tab.database}
+                    table={tab.table!}
+                    activeConnections={store.activeConnections}
+                    addLog={store.addLog}
+                    pageSize={tableSettings[tab.id]?.pageSize ?? 100}
+                    onPageSizeChange={(size) => updateTableSetting(tab.id, { pageSize: size })}
+                    infiniteScroll={tableSettings[tab.id]?.infiniteScroll ?? false}
+                    onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
+                  />
+                ) : (
+                  <QueryView
+                    tabId={tab.id}
+                    query={tab.query ?? ""}
+                    onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
+                    onRunQuery={(q) => store.executeQuery(tab.connectionId, tab.database, q)}
+                  />
+                )}
+              </div>
+            ))}
           </div>
 
           {/* SQL Log Panel */}

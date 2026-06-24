@@ -100,6 +100,7 @@ export default function ConnectionsPanel({
                 className="flex items-center gap-1 px-2 py-1.5 hover:bg-accent/60 group cursor-pointer"
                 onMouseEnter={() => setHoveredId(conn.id)}
                 onMouseLeave={() => setHoveredId(null)}
+                onDoubleClick={() => !isConnected && onConnect(conn)}
               >
                 <Database size={14} className={dbTypeIcon(conn.db_type)} />
                 <span className="flex-1 text-sm text-text-primary truncate ml-1">
