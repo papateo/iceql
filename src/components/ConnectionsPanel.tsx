@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Plus,
   Trash2,
@@ -11,9 +11,16 @@ import {
   Table,
   Columns,
   Code2,
+  RefreshCw,
+  Copy,
+  TableProperties,
+  FilePlus2,
+  Eraser,
+  PenLine,
 } from "lucide-react";
 import type { ConnectionConfig, ActiveConnection } from "../types";
 import AddConnectionModal from "./AddConnectionModal";
+import ContextMenu, { type ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
   savedConnections: ConnectionConfig[];
@@ -28,7 +35,14 @@ interface Props {
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string) => void;
-  onOpenQuery: (configId: string, dbName: string) => void;
+  onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
+  onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
+}
+
+interface CtxState {
+  x: number;
+  y: number;
+  items: ContextMenuEntry[];
 }
 
 export default function ConnectionsPanel({
@@ -44,10 +58,18 @@ export default function ConnectionsPanel({
   onExpandTable,
   onOpenTable,
   onOpenQuery,
+  onEditTable,
 }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [ctx, setCtx] = useState<CtxState | null>(null);
+
+  const openCtx = useCallback((e: React.MouseEvent, items: ContextMenuEntry[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtx({ x: e.clientX, y: e.clientY, items });
+  }, []);
   const [deletingConn, setDeletingConn] = useState<ConnectionConfig | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
 
@@ -115,6 +137,30 @@ export default function ConnectionsPanel({
                 onMouseEnter={() => setHoveredId(conn.id)}
                 onMouseLeave={() => setHoveredId(null)}
                 onDoubleClick={() => !isConnected && !isConnecting && onConnect(conn)}
+                onContextMenu={(e) => {
+                  const db = ac?.databases[0] ?? "";
+                  const isPg = conn.db_type === "postgresql";
+                  const isSqlite = conn.db_type === "sqlite";
+                  const items: import("./ContextMenu").ContextMenuEntry[] = [
+                    ...(isConnected ? [{ label: "New Query", icon: <Code2 size={12} />, onClick: () => onOpenQuery(conn.id, db) }] : []),
+                    ...(isConnected && !isSqlite ? [
+                      { separator: true as const },
+                      isPg
+                        ? { label: "Create Schema", icon: <FilePlus2 size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE SCHEMA "new_schema";`) }
+                        : { label: "Create Database", icon: <FilePlus2 size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE DATABASE \`new_database\`;`) },
+                      isPg
+                        ? { label: "Create Database", icon: <Database size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE DATABASE new_database;`) }
+                        : null,
+                    ].filter(Boolean) as import("./ContextMenu").ContextMenuEntry[] : []),
+                    ...(!isConnected && !isConnecting ? [
+                      { label: "Connect", icon: <Plug size={12} />, onClick: () => onConnect(conn) },
+                    ] : []),
+                    { separator: true as const },
+                    { label: "Edit Connection", icon: <Edit2 size={12} />, onClick: () => { setEditingConn(conn); setShowModal(true); } },
+                    { label: "Delete Connection", icon: <Trash2 size={12} />, danger: true, onClick: () => setDeletingConn(conn) },
+                  ];
+                  openCtx(e, items);
+                }}
               >
                 {isConnected ? (
                   <button
@@ -181,10 +227,13 @@ export default function ConnectionsPanel({
                   dbName={dbName}
                   ac={ac}
                   configId={conn.id}
+                  dbType={conn.db_type}
                   onExpandDb={onExpandDb}
                   onExpandTable={onExpandTable}
                   onOpenTable={onOpenTable}
                   onOpenQuery={onOpenQuery}
+                  onEditTable={onEditTable}
+                  onContextMenu={openCtx}
                 />
               ))}
             </div>
@@ -198,6 +247,10 @@ export default function ConnectionsPanel({
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingConn(undefined); }}
         />
+      )}
+
+      {ctx && (
+        <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />
       )}
 
       {deletingConn && (
@@ -239,27 +292,53 @@ function DatabaseNode({
   dbName,
   ac,
   configId,
+  dbType,
   onExpandDb,
   onExpandTable,
   onOpenTable,
   onOpenQuery,
+  onEditTable,
+  onContextMenu,
 }: {
   dbName: string;
   ac: ActiveConnection;
   configId: string;
+  dbType: string;
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string) => void;
-  onOpenQuery: (configId: string, dbName: string) => void;
+  onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
+  onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
+  onContextMenu: (e: React.MouseEvent, items: ContextMenuEntry[]) => void;
 }) {
   const isExpanded = ac.expandedDbs.has(dbName);
   const tables = ac.dbTables[dbName] ?? [];
+
+  const q = (sql: string) => onOpenQuery(configId, dbName, sql);
+
+  const dbMenuItems: ContextMenuEntry[] = [
+    { label: "New Query", icon: <Code2 size={12} />, onClick: () => onOpenQuery(configId, dbName) },
+    { label: "Refresh Tables", icon: <RefreshCw size={12} />, onClick: () => onExpandDb(configId, dbName) },
+    { separator: true },
+    {
+      label: "Create Table",
+      icon: <FilePlus2 size={12} />,
+      onClick: () => q(`CREATE TABLE \`new_table\` (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);`),
+    },
+    {
+      label: "Drop Database",
+      icon: <Trash2 size={12} />,
+      danger: true,
+      onClick: () => q(`DROP DATABASE \`${dbName}\`;`),
+    },
+  ];
 
   return (
     <div>
       <div
         className="flex items-center gap-1 pl-5 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
         onClick={() => onExpandDb(configId, dbName)}
+        onContextMenu={(e) => onContextMenu(e, dbMenuItems)}
       >
         {isExpanded ? (
           <ChevronDown size={12} className="text-text-muted" />
@@ -284,8 +363,12 @@ function DatabaseNode({
           dbName={dbName}
           ac={ac}
           configId={configId}
+          dbType={dbType}
           onExpandTable={onExpandTable}
           onOpenTable={onOpenTable}
+          onOpenQuery={onOpenQuery}
+          onEditTable={onEditTable}
+          onContextMenu={onContextMenu}
         />
       ))}
     </div>
@@ -297,19 +380,42 @@ function TableNode({
   dbName,
   ac,
   configId,
+  dbType,
   onExpandTable,
   onOpenTable,
+  onOpenQuery,
+  onEditTable,
+  onContextMenu,
 }: {
   table: { name: string; table_type: string };
   dbName: string;
   ac: ActiveConnection;
   configId: string;
+  dbType: string;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string) => void;
+  onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
+  onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
+  onContextMenu: (e: React.MouseEvent, items: ContextMenuEntry[]) => void;
 }) {
   const key = `${dbName}.${table.name}`;
   const isExpanded = ac.expandedTables.has(key);
   const columns = ac.dbColumns[key] ?? [];
+
+  const wrap = (name: string) => dbType === "postgresql" ? `"${name}"` : `\`${name}\``;
+  const tbl = wrap(table.name);
+  const q = (sql: string) => onOpenQuery(configId, dbName, sql);
+
+  const tableMenuItems: ContextMenuEntry[] = [
+    { label: "View Data",      icon: <TableProperties size={12} />, onClick: () => onOpenTable(configId, dbName, table.name) },
+    { label: "Select 100 rows", icon: <Code2 size={12} />,          onClick: () => q(`SELECT * FROM ${tbl} LIMIT 100;`) },
+    { label: "Copy Name",      icon: <Copy size={12} />,            onClick: () => navigator.clipboard.writeText(table.name) },
+    { separator: true },
+    { label: "Edit Table",     icon: <PenLine size={12} />,         onClick: () => onEditTable(configId, dbName, table.name, dbType) },
+    { label: "Create Table",   icon: <FilePlus2 size={12} />,       onClick: () => q(`CREATE TABLE ${tbl}_copy LIKE ${tbl};`) },
+    { label: "Truncate Table", icon: <Eraser size={12} />,  danger: true, onClick: () => q(`TRUNCATE TABLE ${tbl};`) },
+    { label: "Drop Table",     icon: <Trash2 size={12} />,  danger: true, onClick: () => q(`DROP TABLE ${tbl};`) },
+  ];
 
   return (
     <div>
@@ -317,6 +423,7 @@ function TableNode({
         className="flex items-center gap-1 pl-9 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
         onClick={() => onExpandTable(configId, dbName, table.name)}
         onDoubleClick={() => onOpenTable(configId, dbName, table.name)}
+        onContextMenu={(e) => onContextMenu(e, tableMenuItems)}
       >
         {isExpanded ? (
           <ChevronDown size={11} className="text-text-muted" />

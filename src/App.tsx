@@ -9,6 +9,7 @@ import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./store/appStore";
 import type { ActiveConnection } from "./types";
 import SettingsModal, { type AppSettings } from "./components/SettingsModal";
+import EditTableModal, { type EditTableTarget } from "./components/EditTableModal";
 
 // Build a CodeMirror SQL schema ({ table: [columns] }) from the cached metadata of a connection.
 function buildSqlSchema(
@@ -44,6 +45,7 @@ export default function App() {
     localStorage.setItem("iceql-settings", JSON.stringify(settings));
   }, [settings]);
   const [dragging, setDragging] = useState(false);
+  const [editTableTarget, setEditTableTarget] = useState<EditTableTarget | null>(null);
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
   const [connectError, setConnectError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
@@ -210,6 +212,11 @@ export default function App() {
           onExpandTable={store.expandTable}
           onOpenTable={store.openTableTab}
           onOpenQuery={store.openQueryTab}
+          onEditTable={(configId, dbName, tableName, dbType) => {
+            const ac = store.activeConnections.get(configId);
+            if (!ac) return;
+            setEditTableTarget({ connectionId: ac.connectionId, dbType, database: dbName, tableName });
+          }}
         />
       </div>
 
@@ -344,6 +351,12 @@ export default function App() {
           settings={{ theme: settings.theme ?? "dark", fontSize: settings.fontSize ?? "md" }}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {editTableTarget && (
+        <EditTableModal
+          target={editTableTarget}
+          onClose={() => setEditTableTarget(null)}
         />
       )}
     </div>

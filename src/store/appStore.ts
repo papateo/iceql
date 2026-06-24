@@ -422,7 +422,7 @@ export function useAppStore() {
   );
 
   const openQueryTab = useCallback(
-    (configId: string, dbName: string) => {
+    (configId: string, dbName: string, initialQuery = "") => {
       const tabId = uuidv4();
       const tab: Tab = {
         id: tabId,
@@ -430,7 +430,7 @@ export function useAppStore() {
         type: "query",
         connectionId: configId,
         database: dbName,
-        query: "",
+        query: initialQuery,
       };
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tabId);
