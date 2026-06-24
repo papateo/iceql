@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+[data-theme="charcoal"] {
   --error-bg: rgb(127 29 29 / 0.2);
   --error-border: rgb(153 27 27 / 0.5);
   --error-text: rgb(252 165 165);
@@ -19,6 +20,54 @@
   --font-size-base: 14px;
 }
 
+[data-theme="ocean"] {
+  --error-bg: rgb(127 29 29 / 0.2);
+  --error-border: rgb(153 27 27 / 0.5);
+  --error-text: rgb(252 165 165);
+  --error-icon: rgb(248 113 113);
+  --color-bg: 7 26 46;
+  --color-sidebar: 10 35 64;
+  --color-accent: 14 58 110;
+  --color-highlight: 56 189 248;
+  --color-surface: 13 42 69;
+  --color-border: 26 64 96;
+  --color-text-primary: 224 242 254;
+  --color-text-secondary: 125 211 252;
+  --color-text-muted: 56 96 122;
+}
+
+[data-theme="midnight"] {
+  --error-bg: rgb(127 29 29 / 0.2);
+  --error-border: rgb(153 27 27 / 0.5);
+  --error-text: rgb(252 165 165);
+  --error-icon: rgb(248 113 113);
+  --color-bg: 8 8 12;
+  --color-sidebar: 14 14 20;
+  --color-accent: 24 24 32;
+  --color-highlight: 139 92 246;
+  --color-surface: 18 18 26;
+  --color-border: 38 38 52;
+  --color-text-primary: 230 230 240;
+  --color-text-secondary: 148 148 180;
+  --color-text-muted: 80 80 110;
+}
+
+[data-theme="nord"] {
+  --error-bg: rgb(127 29 29 / 0.2);
+  --error-border: rgb(153 27 27 / 0.5);
+  --error-text: rgb(252 165 165);
+  --error-icon: rgb(248 113 113);
+  --color-bg: 36 41 51;
+  --color-sidebar: 43 48 59;
+  --color-accent: 58 65 80;
+  --color-highlight: 136 192 208;
+  --color-surface: 49 55 67;
+  --color-border: 67 76 94;
+  --color-text-primary: 216 222 233;
+  --color-text-secondary: 136 192 208;
+  --color-text-muted: 96 110 130;
+}
+
 [data-theme="light"] {
   --error-bg: rgb(254 226 226);
   --error-border: rgb(252 165 165);
@@ -33,6 +82,22 @@
   --color-text-primary: 12 28 46;
   --color-text-secondary: 30 90 138;
   --color-text-muted: 90 138 170;
+}
+
+[data-theme="sepia"] {
+  --error-bg: rgb(254 226 226);
+  --error-border: rgb(252 165 165);
+  --error-text: rgb(153 27 27);
+  --error-icon: rgb(220 38 38);
+  --color-bg: 245 240 230;
+  --color-sidebar: 235 228 215;
+  --color-accent: 218 208 190;
+  --color-highlight: 180 83 9;
+  --color-surface: 228 220 205;
+  --color-border: 200 188 168;
+  --color-text-primary: 40 28 18;
+  --color-text-secondary: 120 80 40;
+  --color-text-muted: 160 130 90;
 }
 
 * {

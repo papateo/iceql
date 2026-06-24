@@ -32,15 +32,13 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("iceql-settings") ?? "{}"); } catch { return {}; }
   });
 
-  const [isDark, setIsDark] = useState(true);
+  const DARK_THEMES = new Set(["charcoal", "ocean", "midnight", "nord"]);
+  const isDark = DARK_THEMES.has(settings.theme ?? "charcoal");
 
   useEffect(() => {
-    const { theme = "dark", fontSize = "md" } = settings;
+    const { theme = "charcoal", fontSize = "md" } = settings;
     const root = document.documentElement;
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const resolved = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
-    root.setAttribute("data-theme", resolved);
-    setIsDark(resolved === "dark");
+    root.setAttribute("data-theme", theme);
     const px: Record<string, string> = { sm: "12px", md: "14px", lg: "16px", xl: "18px" };
     root.style.fontSize = px[fontSize] ?? "14px";
     localStorage.setItem("iceql-settings", JSON.stringify(settings));
