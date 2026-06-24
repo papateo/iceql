@@ -21,6 +21,8 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onNewQuer
           <div
             key={tab.id}
             onClick={() => onSelect(tab.id)}
+            onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+            onMouseUp={(e) => { if (e.button === 1) onClose(tab.id); }}
             className={`flex items-center gap-1.5 px-3 py-2 cursor-pointer border-r border-border flex-shrink-0 group transition-colors ${
               isActive
                 ? "bg-bg text-text-primary border-t-2 border-t-highlight"
