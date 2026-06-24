@@ -353,7 +353,7 @@ export default function TableDataView({
                   {columns.map((col) => (
                     <td key={col} className="px-1 py-1 border-r border-border last:border-r-0">
                       <div className="relative">
-                        <input type="text" placeholder="Filter…" value={filters[col] ?? ""} onChange={(e) => setFilters((prev) => ({ ...prev, [col]: e.target.value }))} className="w-full text-[11px] bg-accent/60 border border-transparent focus:border-border rounded px-2 py-0.5 text-text-secondary placeholder:text-text-muted/40 outline-none focus:bg-accent pr-5" />
+                        <input type="text" placeholder="Filter…" value={filters[col] ?? ""} onChange={(e) => setFilters((prev) => ({ ...prev, [col]: e.target.value }))} className="w-full text-[11px] bg-accent/60 border border-transparent focus:border-border rounded px-2 py-0.5 text-text-secondary placeholder:text-text-muted outline-none focus:bg-accent pr-5" />
                         {filters[col] && (
                           <button onClick={() => clearFilter(col)} className="absolute right-1 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"><X size={10} /></button>
                         )}
