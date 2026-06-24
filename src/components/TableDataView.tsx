@@ -12,11 +12,12 @@ import {
   X,
   Search,
   Download,
+  Trash2,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
-import { tableRef, buildUpdateStatements } from "../utils/sql";
+import { tableRef, buildUpdateStatements, buildDeleteStatements } from "../utils/sql";
 
 interface Props {
   configId: string;
@@ -75,6 +76,8 @@ export default function TableDataView({
 
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const lastClickedRow = useRef<number | null>(null);
   const isDragging = useRef(false);
   const dragMode = useRef<"select" | "deselect">("select");
@@ -266,6 +269,29 @@ export default function TableDataView({
     }
   };
 
+  const handleDelete = async () => {
+    if (!ac || selectedRows.size === 0) return;
+    const dbType = ac.config.db_type;
+    const indices = [...selectedRows].sort((a, b) => a - b);
+    const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices);
+    setDeleting(true);
+    setError(null);
+    try {
+      for (const sql of sqls) {
+        const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql });
+        addLog({ sql, connectionName: ac.config.name, database, status: "success", rowsAffected: (res as QueryResult).row_count, executionTimeMs: (res as QueryResult).execution_time_ms });
+      }
+      setSelectedRows(new Set());
+      setShowDeleteConfirm(false);
+      await fetchInitial();
+    } catch (e) {
+      setError(String(e));
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const getCellValue = (rowIdx: number, col: string): unknown => {
     const editKey = `${rowIdx}:${col}`;
     return edits.has(editKey) ? edits.get(editKey) : rows[rowIdx]?.[col];
@@ -345,6 +371,16 @@ export default function TableDataView({
         )}
         {selectedRows.size > 0 && (
           <span className="text-highlight text-xs">{selectedRows.size} selected</span>
+        )}
+        {selectedRows.size > 0 && !hasEdits && (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-red-400 hover:bg-red-500/10 transition-colors text-xs"
+            title={`Delete ${selectedRows.size} selected row${selectedRows.size > 1 ? "s" : ""}`}
+          >
+            <Trash2 size={11} />
+            Delete {selectedRows.size}
+          </button>
         )}
         {rows.length > 0 && !hasEdits && (
           <div className="flex items-center gap-0.5 text-text-muted text-[10px]">
@@ -576,6 +612,27 @@ export default function TableDataView({
           <span className={infiniteScroll ? "text-highlight" : ""}>Infinite scroll</span>
         </button>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[360px] p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-full bg-red-900/30 text-red-400 flex-shrink-0"><Trash2 size={16} /></div>
+              <h2 className="text-sm font-semibold text-text-primary">Delete {selectedRows.size} row{selectedRows.size > 1 ? "s" : ""}?</h2>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed mb-5">
+              This will permanently delete <span className="font-medium text-text-primary">{selectedRows.size} row{selectedRows.size > 1 ? "s" : ""}</span> from <span className="font-mono text-highlight">{table}</span>. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Cancel</button>
+              <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-red-600 text-white hover:bg-red-500 font-medium transition-colors disabled:opacity-50">
+                {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {ctxMenu && (
         <TableCtxMenu

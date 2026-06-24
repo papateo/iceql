@@ -71,6 +71,34 @@ export function buildUpdateStatements(
   return sqls;
 }
 
+// Build DELETE statements for a set of selected row indices.
+export function buildDeleteStatements(
+  dbType: string | undefined,
+  database: string,
+  table: string,
+  columns: string[],
+  rows: Record<string, unknown>[],
+  selectedIndices: number[],
+  rowIds?: (string | null)[]
+): string[] {
+  const qi = (name: string) => quoteIdent(dbType, name);
+  const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
+  return selectedIndices.map((rowIdx) => {
+    const row = rows[rowIdx];
+    const ctid = rowIds?.[rowIdx];
+    if (ctid) {
+      return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ctid = ${sqlLiteral(ctid)}`;
+    }
+    const where = columns
+      .map((col) => {
+        const v = row[col];
+        return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;
+      })
+      .join(" AND ");
+    return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ${where}${limitClause}`;
+  });
+}
+
 // Pretty-print a generated SQL statement onto multiple lines for readability. Operates only
 // outside string literals so values containing words like AND/OR/SET aren't broken.
 export function formatSql(sql: string): string {

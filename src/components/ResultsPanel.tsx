@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
-import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
-import { buildUpdateStatements, formatSql } from "../utils/sql";
+import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
 import SqlPreview from "./SqlPreview";
 
 interface Props {
@@ -44,7 +45,10 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [commitNotice, setCommitNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const lastClickedRow = useRef<number | null>(null);
   const isDragging = useRef(false);
   const dragStartRow = useRef<number | null>(null);
@@ -161,6 +165,13 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const hasEdits = edits.size > 0;
 
+  const virtualizer = useVirtualizer({
+    count: data.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 33,
+    overscan: 20,
+  });
+
   const startEdit = (rowIdx: number, col: string) => {
     if (!editableTable) return;
     setCommitNotice(null);
@@ -187,6 +198,26 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const cellValue = (rowIdx: number, col: string): unknown => {
     const editKey = `${rowIdx}:${col}`;
     return edits.has(editKey) ? edits.get(editKey) : data[rowIdx][col];
+  };
+
+  const handleDelete = async () => {
+    if (!editableTable || selectedRows.size === 0) return;
+    const indices = [...selectedRows].sort((a, b) => a - b);
+    const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined);
+    setDeleting(true);
+    setCommitError(null);
+    setCommitNotice(null);
+    try {
+      const affected = await onCommit(sqls);
+      setSelectedRows(new Set());
+      setShowDeleteConfirm(false);
+      setCommitNotice({ ok: true, msg: `Deleted ${affected} row${affected === 1 ? "" : "s"}` });
+    } catch (e) {
+      setCommitError(String(e));
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleCommit = async () => {
@@ -280,6 +311,16 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           <span className="text-red-400 truncate max-w-[320px]" title={commitError}>{commitError}</span>
         )}
 
+        {editableTable && selectedRows.size > 0 && (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-red-400 hover:bg-red-500/10 transition-colors text-xs"
+            title={`Delete ${selectedRows.size} selected row${selectedRows.size > 1 ? "s" : ""}`}
+          >
+            <Trash2 size={11} />
+            Delete {selectedRows.size}
+          </button>
+        )}
         {data.length > 0 && (
           <div className="flex items-center gap-0.5 text-text-muted text-[10px]">
             <Download size={10} />
@@ -321,7 +362,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-accent border-b border-border">
@@ -347,7 +388,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
             </tr>
           </thead>
           <tbody>
-            {data.map((_, rowIdx) => {
+            {virtualizer.getVirtualItems().length > 0 && (
+              <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
+            )}
+            {virtualizer.getVirtualItems().map((vRow) => {
+              const rowIdx = vRow.index;
               const isSelected = selectedRows.has(rowIdx);
               return (
               <tr
@@ -402,6 +447,13 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                 })}
               </tr>
             );})}
+            {virtualizer.getVirtualItems().length > 0 && (() => {
+              const items = virtualizer.getVirtualItems();
+              const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
+              return bottomPad > 0
+                ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
+                : null;
+            })()}
           </tbody>
         </table>
 
@@ -453,6 +505,30 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
               >
                 <Check size={13} />
                 Run &amp; Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[360px] p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-full bg-red-900/30 text-red-400 flex-shrink-0"><Trash2 size={16} /></div>
+              <h2 className="text-sm font-semibold text-text-primary">Delete {selectedRows.size} row{selectedRows.size > 1 ? "s" : ""}?</h2>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed mb-5">
+              This will permanently delete <span className="font-medium text-text-primary">{selectedRows.size} row{selectedRows.size > 1 ? "s" : ""}</span> from <span className="font-mono text-highlight">{editableTable}</span>. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-red-600 text-white hover:bg-red-500 font-medium transition-colors disabled:opacity-50">
+                {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                Delete
               </button>
             </div>
           </div>
