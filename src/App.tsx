@@ -53,6 +53,19 @@ export default function App() {
     }
   };
 
+  const handleNewQuery = () => {
+    // Prefer the active tab's connection/database, else fall back to the first active connection.
+    const active = store.tabs.find((t) => t.id === store.activeTabId);
+    if (active) {
+      store.openQueryTab(active.connectionId, active.database);
+      return;
+    }
+    const first = store.activeConnections.values().next().value;
+    if (first) {
+      store.openQueryTab(first.config.id, first.databases[0] ?? "");
+    }
+  };
+
   const handleDividerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setDragging(true);
@@ -143,6 +156,8 @@ export default function App() {
               activeTabId={store.activeTabId}
               onSelect={store.setActiveTabId}
               onClose={store.closeTab}
+              onNewQuery={handleNewQuery}
+              canNewQuery={store.activeConnections.size > 0}
             />
           </div>
           <button

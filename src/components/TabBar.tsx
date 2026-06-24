@@ -1,4 +1,4 @@
-import { X, Table, Code2 } from "lucide-react";
+import { X, Table, Code2, Plus } from "lucide-react";
 import type { Tab } from "../types";
 
 interface Props {
@@ -6,9 +6,11 @@ interface Props {
   activeTabId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onNewQuery: () => void;
+  canNewQuery: boolean;
 }
 
-export default function TabBar({ tabs, activeTabId, onSelect, onClose }: Props) {
+export default function TabBar({ tabs, activeTabId, onSelect, onClose, onNewQuery, canNewQuery }: Props) {
   if (tabs.length === 0) return null;
 
   return (
@@ -40,6 +42,15 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose }: Props) 
           </div>
         );
       })}
+      {canNewQuery && (
+        <button
+          onClick={onNewQuery}
+          title="New query editor"
+          className="flex items-center justify-center px-2.5 py-2 flex-shrink-0 text-text-muted hover:text-highlight hover:bg-accent/40 transition-colors"
+        >
+          <Plus size={15} />
+        </button>
+      )}
     </div>
   );
 }

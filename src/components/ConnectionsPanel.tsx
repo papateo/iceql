@@ -46,6 +46,7 @@ export default function ConnectionsPanel({
   const [showModal, setShowModal] = useState(false);
   const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [deletingConn, setDeletingConn] = useState<ConnectionConfig | null>(null);
 
   const handleSave = (config: ConnectionConfig) => {
     if (editingConn) {
@@ -118,7 +119,7 @@ export default function ConnectionsPanel({
                       <Edit2 size={12} />
                     </button>
                     <button
-                      onClick={() => onDelete(conn.id)}
+                      onClick={() => setDeletingConn(conn)}
                       className="p-1 rounded hover:bg-border text-text-muted hover:text-red-400"
                       title="Delete"
                     >
@@ -173,6 +174,38 @@ export default function ConnectionsPanel({
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingConn(undefined); }}
         />
+      )}
+
+      {deletingConn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-sidebar border border-border rounded-lg shadow-xl w-[340px] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-2 rounded-full bg-red-900/30 text-red-400">
+                <Trash2 size={16} />
+              </div>
+              <h2 className="text-sm font-semibold text-text-primary">Delete connection</h2>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed mb-5">
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-text-primary">{deletingConn.name}</span>? This action
+              cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDeletingConn(null)}
+                className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { onDelete(deletingConn.id); setDeletingConn(null); }}
+                className="px-3 py-1.5 rounded text-xs bg-red-600 text-white hover:bg-red-500 font-medium transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
