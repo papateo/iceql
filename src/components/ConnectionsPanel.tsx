@@ -129,55 +129,49 @@ export default function ConnectionsPanel({
                   <span className="w-[13px] flex-shrink-0" />
                 )}
                 <Database size={14} className={dbTypeIcon(conn.db_type)} />
-                <span className="flex-1 text-sm text-text-primary truncate ml-1">
-                  {conn.name}
+                <span className="flex items-center gap-1.5 flex-1 min-w-0 ml-1">
+                  <span className="text-sm text-text-primary truncate">{conn.name}</span>
+                  {isConnected && <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />}
                 </span>
 
-                {/* Connecting spinner */}
-                {isConnecting && (
-                  <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                )}
-
-                {/* Action buttons shown on hover */}
-                {!isConnecting && hoveredId === conn.id && (
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      onClick={() => { setEditingConn(conn); setShowModal(true); }}
-                      className="p-1 rounded hover:bg-border text-text-muted hover:text-text-primary"
-                      title="Edit"
-                    >
-                      <Edit2 size={12} />
-                    </button>
-                    <button
-                      onClick={() => setDeletingConn(conn)}
-                      className="p-1 rounded hover:bg-border text-text-muted hover:text-red-400"
-                      title="Delete"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                    {isConnected ? (
-                      <button
-                        onClick={() => onDisconnect(conn.id)}
-                        className="p-1 rounded hover:bg-border text-green-400 hover:text-red-400"
-                        title="Disconnect"
-                      >
-                        <PlugZap size={12} />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onConnect(conn)}
-                        className="p-1 rounded hover:bg-border text-text-muted hover:text-green-400"
-                        title="Connect"
-                      >
-                        <Plug size={12} />
-                      </button>
-                    )}
+                {/* Right side: fixed layout, all elements always in DOM */}
+                <div className="flex items-center gap-0.5 flex-shrink-0">
+                  {/* Spinner: visible only while connecting, occupies same slot as edit button */}
+                  <div className={`p-1 transition-opacity ${isConnecting ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+                    <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
                   </div>
-                )}
-
-                {isConnected && !isConnecting && hoveredId !== conn.id && (
-                  <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
-                )}
+                  <button
+                    onClick={() => { setEditingConn(conn); setShowModal(true); }}
+                    className={`p-1 rounded hover:bg-border text-text-muted hover:text-text-primary transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                    title="Edit"
+                  >
+                    <Edit2 size={12} />
+                  </button>
+                  <button
+                    onClick={() => setDeletingConn(conn)}
+                    className={`p-1 rounded hover:bg-border text-text-muted hover:text-red-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                    title="Delete"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                  {isConnected ? (
+                    <button
+                      onClick={() => onDisconnect(conn.id)}
+                      className={`p-1 rounded hover:bg-border text-green-400 hover:text-red-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                      title="Disconnect"
+                    >
+                      <PlugZap size={12} />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onConnect(conn)}
+                      className={`p-1 rounded hover:bg-border text-text-muted hover:text-green-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                      title="Connect"
+                    >
+                      <Plug size={12} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Database tree */}
