@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Database, ScrollText, Settings } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ConnectionsPanel from "./components/ConnectionsPanel";
@@ -6,7 +6,7 @@ import TabBar from "./components/TabBar";
 import TableDataView from "./components/TableDataView";
 import QueryView from "./components/QueryView";
 import SqlLogPanel from "./components/SqlLogPanel";
-import { useAppStore, loadSavedConnections } from "./store/appStore";
+import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./store/appStore";
 import type { ActiveConnection } from "./types";
 import SettingsModal, { type AppSettings } from "./components/SettingsModal";
 
@@ -68,12 +68,57 @@ export default function App() {
     }));
   };
 
-  // Load saved connections on mount
+  // Flag: skip saving during restore to avoid overwriting saved session
+  const isRestoringRef = useRef(true);
+
+  // Load saved connections + restore previous session on mount
   useEffect(() => {
-    loadSavedConnections().then((conns) => {
+    loadSavedConnections().then(async (conns) => {
       store.setSavedConnections(conns);
+
+      const session = loadSession();
+      if (!session) {
+        isRestoringRef.current = false;
+        return;
+      }
+
+      // Re-connect previously active connections, then restore tabs
+      const reconnected = new Set<string>();
+      await Promise.all(
+        (session.activeConnectionIds ?? []).map(async (configId) => {
+          const config = conns.find((c) => c.id === configId);
+          if (!config) return;
+          try {
+            await store.connectToDb(config);
+            reconnected.add(configId);
+          } catch { /* skip silently if reconnect fails */ }
+        })
+      );
+
+      // Restore tabs that belong to successfully reconnected connections
+      const restoredTabs = (session.tabs ?? []).filter(
+        (t) => reconnected.has(t.connectionId)
+      );
+      if (restoredTabs.length > 0) {
+        store.setTabs(restoredTabs);
+        const restoredActive = restoredTabs.find((t) => t.id === session.activeTabId);
+        store.setActiveTabId(restoredActive?.id ?? restoredTabs[0].id);
+      }
+
+      // Allow saving from now on
+      isRestoringRef.current = false;
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist session whenever tabs or active connections change (skip during restore)
+  useEffect(() => {
+    if (isRestoringRef.current) return;
+    saveSession(
+      store.tabs,
+      store.activeTabId,
+      [...store.activeConnections.keys()]
+    );
+  }, [store.tabs, store.activeTabId, store.activeConnections]);
 
   const handleConnect = async (config: typeof store.savedConnections[0]) => {
     setConnectingIds((prev) => new Set(prev).add(config.id));

@@ -102,6 +102,32 @@ function autoQuoteIdentifiers(query: string, quoteMap: Map<string, string | null
   return out;
 }
 
+// Session persistence (tabs + which connections were active)
+const SESSION_KEY = "iceql-session";
+
+interface PersistedSession {
+  tabs: Tab[];
+  activeTabId: string | null;
+  activeConnectionIds: string[]; // configIds that were connected
+}
+
+export function saveSession(tabs: Tab[], activeTabId: string | null, activeConnectionIds: string[]) {
+  try {
+    const session: PersistedSession = { tabs, activeTabId, activeConnectionIds };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch { /* ignore */ }
+}
+
+export function loadSession(): PersistedSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedSession;
+  } catch {
+    return null;
+  }
+}
+
 // Saved connections persistence via Tauri backend
 export async function loadSavedConnections(): Promise<ConnectionConfig[]> {
   try {
@@ -492,6 +518,7 @@ export function useAppStore() {
     setSavedConnections,
     activeConnections,
     tabs,
+    setTabs,
     activeTabId,
     setActiveTabId,
     selectedConnectionId,
