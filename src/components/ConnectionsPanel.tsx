@@ -562,7 +562,7 @@ function TableNode({
   return (
     <div>
       <div
-        className="flex items-center gap-1 pl-9 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
+        className="relative flex items-center gap-1 pl-9 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
         onClick={() => onExpandTable(configId, dbName, table.name)}
         onDoubleClick={() => onOpenTable(configId, dbName, table.name)}
         onContextMenu={(e) => onContextMenu(e, tableMenuItems)}
@@ -573,26 +573,28 @@ function TableNode({
           <ChevronRight size={11} className="text-text-muted" />
         )}
         <Table size={12} className="text-blue-300" />
-        <span className="flex-1 text-xs text-text-secondary ml-1 truncate">{table.name}</span>
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="flex-1 text-xs text-text-secondary ml-1 truncate min-w-0">{table.name}</span>
+        {/* Pin indicator when not hovered */}
+        {pinned && (
+          <Pin size={10} className="fill-current text-highlight flex-shrink-0 group-hover:hidden" />
+        )}
+        {/* Action buttons — absolutely positioned so they don't push the name */}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-accent/90 rounded px-0.5">
           <button
             onClick={(e) => { e.stopPropagation(); onOpenTable(configId, dbName, table.name); }}
-            className="text-[10px] text-text-muted hover:text-highlight px-1"
+            className="text-[10px] text-text-muted hover:text-highlight px-1 py-0.5"
             title="Open table"
           >
             open
           </button>
           <button
             onClick={handlePin}
-            className={`p-0.5 rounded transition-colors flex-shrink-0 text-text-muted hover:text-highlight`}
+            className="p-0.5 rounded transition-colors flex-shrink-0 text-text-muted hover:text-highlight"
             title={pinned ? "Unpin" : "Pin table"}
           >
             <Pin size={10} className={pinned ? "fill-current text-highlight" : ""} />
           </button>
         </div>
-        {pinned && (
-          <Pin size={10} className="fill-current text-highlight flex-shrink-0 group-hover:hidden" />
-        )}
       </div>
 
       {isExpanded && columns.map((col) => (
