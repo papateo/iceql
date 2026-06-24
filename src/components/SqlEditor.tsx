@@ -1,9 +1,13 @@
-import { useRef, useCallback, useMemo } from "react";
+import { useRef, useCallback, useMemo, useEffect } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { sql, MySQL, PostgreSQL, SQLite, StandardSQL, type SQLDialect } from "@codemirror/lang-sql";
+import { sql, MySQL, PostgreSQL, SQLite, StandardSQL, type SQLDialect, schemaCompletionSource, keywordCompletionSource } from "@codemirror/lang-sql";
 import { dracula } from "@uiw/codemirror-theme-dracula";
+import { createTheme } from "@uiw/codemirror-themes";
+import { tags as t } from "@lezer/highlight";
 import { EditorView, keymap } from "@codemirror/view";
-import { Prec } from "@codemirror/state";
+import { Compartment, Prec } from "@codemirror/state";
+import { autocompletion, type CompletionContext, type Completion } from "@codemirror/autocomplete";
+import { syntaxTree } from "@codemirror/language";
 import { Play, Loader2, Database } from "lucide-react";
 
 interface Props {
@@ -15,14 +19,84 @@ interface Props {
   databases: string[];
   dbType: string;
   schema: Record<string, string[]>;
+  isDark: boolean;
   onDatabaseChange: (db: string) => void;
 }
+
+const lightTheme = createTheme({
+  theme: "light",
+  settings: {
+    background: "#f0f4f8",
+    foreground: "#0c1c2e",
+    caret: "#0284c7",
+    selection: "rgba(2, 132, 199, 0.18)",
+    selectionMatch: "rgba(2, 132, 199, 0.10)",
+    lineHighlight: "rgba(2, 132, 199, 0.06)",
+    gutterBackground: "#e2eaf2",
+    gutterForeground: "#90aac0",
+    gutterBorder: "#b0c8e0",
+  },
+  styles: [
+    { tag: t.keyword, color: "#0369a1", fontWeight: "bold" },
+    { tag: t.string, color: "#15803d" },
+    { tag: t.number, color: "#b45309" },
+    { tag: t.comment, color: "#6b8fa8", fontStyle: "italic" },
+    { tag: t.operator, color: "#0c1c2e" },
+    { tag: t.punctuation, color: "#374151" },
+    { tag: t.name, color: "#1e3a5f" },
+    { tag: t.typeName, color: "#7c3aed" },
+    { tag: t.function(t.name), color: "#0369a1" },
+  ],
+});
 
 function dialectFor(dbType: string): SQLDialect {
   if (dbType === "postgresql") return PostgreSQL;
   if (dbType === "sqlite") return SQLite;
   if (dbType === "mysql") return MySQL;
   return StandardSQL;
+}
+
+function makeColumnCompletion(schema: Record<string, string[]>) {
+  return (context: CompletionContext) => {
+    const word = context.matchBefore(/\w*/);
+    if (!word || (word.from === word.to && !context.explicit)) return null;
+
+    // Collect all table names referenced in FROM/JOIN clauses of the current statement
+    const doc = context.state.doc.toString();
+    const fromTableRegex = /\bfrom\s+([\w`,."[\]]+)|\bjoin\s+([\w`,."[\]]+)/gi;
+    const referencedTables = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = fromTableRegex.exec(doc)) !== null) {
+      const raw = (m[1] || m[2]).replace(/[`"[\]]/g, "").split(".").pop() ?? "";
+      if (raw) referencedTables.add(raw.toLowerCase());
+    }
+
+    // Check we're not right after a dot (table.column → handled by sql() extension)
+    const before = doc.slice(0, word.from);
+    if (before.endsWith(".")) return null;
+
+    // Build column completions from tables in scope
+    const completions: Completion[] = [];
+    const seen = new Set<string>();
+    for (const [table, cols] of Object.entries(schema)) {
+      if (referencedTables.size === 0 || referencedTables.has(table.toLowerCase())) {
+        for (const col of cols) {
+          if (!seen.has(col)) {
+            seen.add(col);
+            completions.push({ label: col, type: "property", boost: 10 });
+          }
+        }
+      }
+    }
+    if (completions.length === 0) return null;
+
+    // Also add table names
+    for (const table of Object.keys(schema)) {
+      completions.push({ label: table, type: "class", boost: 5 });
+    }
+
+    return { from: word.from, options: completions };
+  };
 }
 
 const customTheme = EditorView.theme({
@@ -35,38 +109,38 @@ const customTheme = EditorView.theme({
     fontSize: "13px",
     lineHeight: "1.6",
   },
-  ".cm-gutters": {
-    backgroundColor: "#071a2e",
-    borderRight: "1px solid #1a4060",
-    color: "#38607a",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "rgba(56, 189, 248, 0.07) !important",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "rgba(56, 189, 248, 0.07)",
-  },
-  ".cm-cursor": {
-    borderLeftColor: "#38bdf8",
-  },
-  ".cm-selectionBackground": {
-    backgroundColor: "rgba(56, 189, 248, 0.15) !important",
-  },
 });
 
-export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, onDatabaseChange }: Props) {
+export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, isDark, onDatabaseChange }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
 
-  // Rebuild the SQL language extension only when the dialect or schema *content* changes
-  // (the schema object is rebuilt on every render, so compare by a stable content key).
+  const sqlCompartment = useMemo(() => new Compartment(), []);
   const schemaKey = Object.entries(schema)
-    .map(([t, cols]) => `${t}:${cols.length}`)
+    .map(([tbl, cols]) => `${tbl}:${cols.length}`)
     .join(",");
-  const sqlExtension = useMemo(
-    () => sql({ dialect: dialectFor(dbType), schema, upperCaseKeywords: false }),
+
+  const makeSqlExt = useCallback(() => {
+    const dialect = dialectFor(dbType);
+    return [
+      sql({ dialect, schema, upperCaseKeywords: false }),
+      autocompletion({
+        override: [
+          makeColumnCompletion(schema),
+          schemaCompletionSource({ dialect, schema }),
+          keywordCompletionSource(dialect, false),
+        ],
+      }),
+    ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dbType, schemaKey]
-  );
+  }, [dbType, schemaKey]);
+
+  useEffect(() => {
+    const view = (editorRef.current as unknown as { view?: EditorView })?.view;
+    if (view) {
+      view.dispatch({ effects: sqlCompartment.reconfigure(makeSqlExt()) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [makeSqlExt]);
 
   const getSelectedOrAll = useCallback(() => {
     const view = (editorRef.current as unknown as { view?: EditorView })?.view;
@@ -128,8 +202,8 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
           ref={editorRef as never}
           value={value}
           onChange={onChange}
-          theme={dracula}
-          extensions={[sqlExtension, customTheme, runExtension]}
+          theme={isDark ? dracula : lightTheme}
+          extensions={[sqlCompartment.of(makeSqlExt()), customTheme, runExtension]}
           style={{ height: "100%" }}
           basicSetup={{
             lineNumbers: true,

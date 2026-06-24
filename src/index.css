@@ -3,28 +3,28 @@
 @tailwind utilities;
 
 :root {
-  --color-bg: #071a2e;
-  --color-sidebar: #0a2340;
-  --color-accent: #0e3a6e;
-  --color-highlight: #38bdf8;
-  --color-surface: #0d2a45;
-  --color-border: #1a4060;
-  --color-text-primary: #e0f2fe;
-  --color-text-secondary: #7dd3fc;
-  --color-text-muted: #38607a;
+  --color-bg: 7 26 46;
+  --color-sidebar: 10 35 64;
+  --color-accent: 14 58 110;
+  --color-highlight: 56 189 248;
+  --color-surface: 13 42 69;
+  --color-border: 26 64 96;
+  --color-text-primary: 224 242 254;
+  --color-text-secondary: 125 211 252;
+  --color-text-muted: 56 96 122;
   --font-size-base: 14px;
 }
 
 [data-theme="light"] {
-  --color-bg: #f0f4f8;
-  --color-sidebar: #e2eaf2;
-  --color-accent: #c8daea;
-  --color-highlight: #0284c7;
-  --color-surface: #dbe8f4;
-  --color-border: #b0c8e0;
-  --color-text-primary: #0c1c2e;
-  --color-text-secondary: #1e5a8a;
-  --color-text-muted: #5a8aaa;
+  --color-bg: 240 244 248;
+  --color-sidebar: 226 234 242;
+  --color-accent: 200 218 234;
+  --color-highlight: 2 132 199;
+  --color-surface: 219 232 244;
+  --color-border: 176 200 224;
+  --color-text-primary: 12 28 46;
+  --color-text-secondary: 30 90 138;
+  --color-text-muted: 90 138 170;
 }
 
 * {
@@ -39,8 +39,8 @@ html, body, #root {
 }
 
 body {
-  background-color: var(--color-bg);
-  color: var(--color-text-primary);
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-text-primary));
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   font-size: var(--font-size-base);
@@ -53,16 +53,51 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a2340;
+  background: rgb(var(--color-sidebar));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1a4060;
+  background: rgb(var(--color-border));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #38bdf8;
+  background: rgb(var(--color-highlight));
+}
+
+/* CodeMirror autocomplete popup */
+.cm-tooltip-autocomplete {
+  background-color: rgb(var(--color-sidebar)) !important;
+  border: 1px solid rgb(var(--color-border)) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25) !important;
+  color: rgb(var(--color-text-primary)) !important;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace !important;
+  font-size: 12px !important;
+}
+
+.cm-tooltip-autocomplete ul {
+  padding: 2px !important;
+}
+
+.cm-tooltip-autocomplete ul li {
+  padding: 3px 8px !important;
+  border-radius: 4px !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+.cm-tooltip-autocomplete ul li[aria-selected="true"] {
+  background-color: rgb(var(--color-highlight) / 0.2) !important;
+  color: rgb(var(--color-highlight)) !important;
+}
+
+.cm-completionIcon {
+  color: rgb(var(--color-text-muted)) !important;
+}
+
+.cm-completionMatchedText {
+  text-decoration: underline !important;
+  color: rgb(var(--color-highlight)) !important;
 }
 
 /* CodeMirror overrides */

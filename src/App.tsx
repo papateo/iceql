@@ -32,12 +32,15 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("iceql-settings") ?? "{}"); } catch { return {}; }
   });
 
+  const [isDark, setIsDark] = useState(true);
+
   useEffect(() => {
     const { theme = "dark", fontSize = "md" } = settings;
     const root = document.documentElement;
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const resolved = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
     root.setAttribute("data-theme", resolved);
+    setIsDark(resolved === "dark");
     const px: Record<string, string> = { sm: "12px", md: "14px", lg: "16px", xl: "18px" };
     root.style.fontSize = px[fontSize] ?? "14px";
     localStorage.setItem("iceql-settings", JSON.stringify(settings));
@@ -255,6 +258,7 @@ export default function App() {
                     databases={store.activeConnections.get(tab.connectionId)?.databases ?? []}
                     dbType={store.activeConnections.get(tab.connectionId)?.config.db_type ?? "mysql"}
                     schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
+                    isDark={isDark}
                     onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}

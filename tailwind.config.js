@@ -4,16 +4,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "var(--color-bg)",
-        sidebar: "var(--color-sidebar)",
-        accent: "var(--color-accent)",
-        highlight: "var(--color-highlight)",
-        surface: "var(--color-surface)",
-        border: "var(--color-border)",
+        bg: "rgb(var(--color-bg) / <alpha-value>)",
+        sidebar: "rgb(var(--color-sidebar) / <alpha-value>)",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
+        highlight: "rgb(var(--color-highlight) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        border: "rgb(var(--color-border) / <alpha-value>)",
         text: {
-          primary: "var(--color-text-primary)",
-          secondary: "var(--color-text-secondary)",
-          muted: "var(--color-text-muted)",
+          primary: "rgb(var(--color-text-primary) / <alpha-value>)",
+          secondary: "rgb(var(--color-text-secondary) / <alpha-value>)",
+          muted: "rgb(var(--color-text-muted) / <alpha-value>)",
         },
       },
     },

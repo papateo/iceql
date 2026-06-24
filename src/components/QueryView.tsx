@@ -11,13 +11,14 @@ interface Props {
   databases: string[];
   dbType: string;
   schema: Record<string, string[]>;
+  isDark: boolean;
   onLoadSchema: () => void;
   onDatabaseChange: (db: string) => void;
   onQueryChange: (q: string) => void;
   onRunQuery: (q: string) => Promise<QueryResult>;
 }
 
-export default function QueryView({ query, database, databases, dbType, schema, onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery }: Props) {
+export default function QueryView({ query, database, databases, dbType, schema, isDark, onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery }: Props) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -125,6 +126,7 @@ export default function QueryView({ query, database, databases, dbType, schema, 
           databases={databases}
           dbType={dbType}
           schema={schema}
+          isDark={isDark}
           onDatabaseChange={onDatabaseChange}
         />
       </div>
