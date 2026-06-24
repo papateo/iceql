@@ -246,11 +246,12 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                     <td
                       key={col}
                       onDoubleClick={() => startEdit(rowIdx, col)}
-                      className={`px-3 py-1.5 border-r border-border/50 last:border-r-0 max-w-[400px] ${
+                      className={`px-3 py-1.5 border-r border-border/50 last:border-r-0 max-w-[400px] relative ${
                         edited ? "bg-highlight/10 text-highlight" : "text-text-primary"
                       } ${editableTable ? "cursor-text" : ""}`}
                     >
-                      {isEditing ? (
+                      {displayValue(cellValue(rowIdx, col))}
+                      {isEditing && (
                         <input
                           ref={inputRef}
                           value={editingCell.value}
@@ -260,10 +261,8 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                             if (e.key === "Enter") commitCellEdit();
                             else if (e.key === "Escape") setEditingCell(null);
                           }}
-                          className="w-full bg-bg border border-highlight rounded px-1 py-0.5 text-text-primary outline-none"
+                          className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs"
                         />
-                      ) : (
-                        displayValue(cellValue(rowIdx, col))
                       )}
                     </td>
                   );
