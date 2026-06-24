@@ -13,6 +13,7 @@ import {
   Search,
 } from "lucide-react";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
+import { tableRef, buildUpdateStatements } from "../utils/sql";
 
 interface Props {
   configId: string;
@@ -182,31 +183,8 @@ export default function TableDataView({
 
   const revertAll = () => { setEdits(new Map()); setEditingCell(null); };
 
-  const buildUpdateSQL = (): string[] => {
-    const byRow = new Map<number, Record<string, unknown>>();
-    edits.forEach((value, key) => {
-      const [rowIdxStr, ...colParts] = key.split(":");
-      const rowIdx = Number(rowIdxStr);
-      const col = colParts.join(":");
-      if (!byRow.has(rowIdx)) byRow.set(rowIdx, {});
-      byRow.get(rowIdx)![col] = value;
-    });
-    const dbType = ac?.config.db_type;
-    const qi = (name: string) => quoteIdent(dbType, name);
-    // MySQL supports `UPDATE ... LIMIT 1`; Postgres/SQLite do not. The full-row WHERE match keeps it specific.
-    const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
-    const sqls: string[] = [];
-    byRow.forEach((changes, rowIdx) => {
-      const original = rows[rowIdx];
-      const setClauses = Object.entries(changes).map(([col, val]) => `${qi(col)} = ${sqlLiteral(val)}`).join(", ");
-      const whereClauses = columns.map((col) => {
-        const v = original[col];
-        return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;
-      }).join(" AND ");
-      sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${whereClauses}${limitClause}`);
-    });
-    return sqls;
-  };
+  const buildUpdateSQL = (): string[] =>
+    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits);
 
   const commitAll = async () => {
     if (!ac || !hasEdits) return;
@@ -514,25 +492,4 @@ export default function TableDataView({
       </div>
     </div>
   );
-}
-
-// Quote an identifier per dialect: MySQL/MariaDB use backticks, Postgres/SQLite use double quotes.
-function quoteIdent(dbType: string | undefined, name: string): string {
-  if (dbType === "mysql") return `\`${name}\``;
-  return `"${name}"`;
-}
-
-// Build a table reference. MySQL qualifies with the database (`db`.`table`); Postgres/SQLite
-// connections already target the database, so the table is referenced unqualified.
-function tableRef(dbType: string | undefined, database: string, table: string): string {
-  if (dbType === "mysql") return `${quoteIdent(dbType, database)}.${quoteIdent(dbType, table)}`;
-  return quoteIdent(dbType, table);
-}
-
-function sqlLiteral(value: unknown): string {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "1" : "0";
-  const str = typeof value === "object" ? JSON.stringify(value) : String(value);
-  return `'${str.replace(/'/g, "''")}'`;
 }
