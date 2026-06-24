@@ -5,7 +5,7 @@ use std::time::Instant;
 
 pub enum ConnectionPool {
     Postgres(sqlx::PgPool, ConnectionConfig),
-    MySQL(sqlx::MySqlPool),
+    MySQL(sqlx::MySqlPool, ConnectionConfig),
     SQLite(sqlx::SqlitePool),
 }
 
@@ -38,7 +38,7 @@ impl ConnectionPool {
                 let pool = sqlx::MySqlPool::connect(&url)
                     .await
                     .map_err(|e| format!("MySQL connection failed: {e}"))?;
-                Ok(ConnectionPool::MySQL(pool))
+                Ok(ConnectionPool::MySQL(pool, config.clone()))
             }
             "sqlite" => {
                 let path = config
@@ -70,7 +70,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::MySQL(pool) => {
+            ConnectionPool::MySQL(pool, _) => {
                 let rows = sqlx::query("SHOW DATABASES")
                     .fetch_all(pool)
                     .await
@@ -127,7 +127,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::MySQL(pool) => {
+            ConnectionPool::MySQL(pool, _) => {
                 let rows = sqlx::query(
                     "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES \
                      WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
@@ -213,7 +213,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::MySQL(pool) => {
+            ConnectionPool::MySQL(pool, _) => {
                 let rows = sqlx::query(
                     "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT \
                      FROM information_schema.COLUMNS \
@@ -285,11 +285,26 @@ impl ConnectionPool {
                     execute_pg(pool_ref, query, start).await
                 }
             }
-            ConnectionPool::MySQL(pool) => {
-                if is_dml(query) {
-                    execute_dml_mysql(pool, query, start).await
+            ConnectionPool::MySQL(pool, config) => {
+                let target_pool;
+                let pool_ref: &sqlx::MySqlPool = if database == config.database {
+                    pool
                 } else {
-                    execute_mysql(pool, query, start).await
+                    let url = format!(
+                        "mysql://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
+                if is_dml(query) {
+                    execute_dml_mysql(pool_ref, query, start).await
+                } else {
+                    execute_mysql(pool_ref, query, start).await
                 }
             }
             ConnectionPool::SQLite(pool) => {
@@ -345,7 +360,7 @@ impl ConnectionPool {
                 result.row_count = total as u64;
                 Ok(result)
             }
-            ConnectionPool::MySQL(pool) => {
+            ConnectionPool::MySQL(pool, _) => {
                 count_query = format!("SELECT COUNT(*) FROM `{database}`.`{table}`");
                 data_query = format!(
                     "SELECT * FROM `{database}`.`{table}` LIMIT {page_size} OFFSET {offset}"
@@ -417,6 +432,52 @@ async fn execute_dml_mysql(pool: &sqlx::MySqlPool, query: &str, start: Instant) 
         row_count: result.rows_affected(),
         execution_time_ms: start.elapsed().as_millis() as u64,
     })
+}
+
+async fn execute_dml_mysql_conn(conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, query: &str, start: Instant) -> Result<QueryResult, String> {
+    let result = sqlx::query(query)
+        .execute(&mut **conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(QueryResult {
+        columns: vec!["rows_affected".to_string()],
+        rows: vec![vec![serde_json::Value::Number(result.rows_affected().into())]],
+        row_count: result.rows_affected(),
+        execution_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+async fn execute_mysql_conn(conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, query: &str, start: Instant) -> Result<QueryResult, String> {
+    use sqlx::Row;
+    let rows = sqlx::query(query)
+        .fetch_all(&mut **conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let elapsed = start.elapsed().as_millis() as u64;
+    if rows.is_empty() {
+        return Ok(QueryResult { columns: vec![], rows: vec![], row_count: 0, execution_time_ms: elapsed });
+    }
+    let columns: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
+    let mut result_rows = Vec::new();
+    for row in &rows {
+        let mut result_row = Vec::new();
+        for i in 0..row.columns().len() {
+            let val = if let Ok(v) = row.try_get::<i64, _>(i) {
+                serde_json::Value::Number(v.into())
+            } else if let Ok(v) = row.try_get::<f64, _>(i) {
+                serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+            } else if let Ok(v) = row.try_get::<bool, _>(i) {
+                serde_json::Value::Bool(v)
+            } else if let Ok(v) = row.try_get::<String, _>(i) {
+                serde_json::Value::String(v)
+            } else {
+                serde_json::Value::Null
+            };
+            result_row.push(val);
+        }
+        result_rows.push(result_row);
+    }
+    Ok(QueryResult { columns, row_count: result_rows.len() as u64, rows: result_rows, execution_time_ms: elapsed })
 }
 
 async fn execute_dml_sqlite(pool: &sqlx::SqlitePool, query: &str, start: Instant) -> Result<QueryResult, String> {

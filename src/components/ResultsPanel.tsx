@@ -134,9 +134,9 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   if (error) {
     return (
       <div className="p-4">
-        <div className="flex items-start gap-2 bg-red-900/20 border border-red-800/50 rounded-lg p-3">
-          <AlertCircle size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
-          <pre className="text-red-300 text-xs whitespace-pre-wrap font-mono">{error}</pre>
+        <div className="error-box">
+          <AlertCircle size={16} className="error-box-icon" />
+          <pre className="error-box-text">{error}</pre>
         </div>
       </div>
     );

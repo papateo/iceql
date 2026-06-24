@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 :root {
+  --error-bg: rgb(127 29 29 / 0.2);
+  --error-border: rgb(153 27 27 / 0.5);
+  --error-text: rgb(252 165 165);
+  --error-icon: rgb(248 113 113);
   --color-bg: 7 26 46;
   --color-sidebar: 10 35 64;
   --color-accent: 14 58 110;
@@ -16,6 +20,10 @@
 }
 
 [data-theme="light"] {
+  --error-bg: rgb(254 226 226);
+  --error-border: rgb(252 165 165);
+  --error-text: rgb(153 27 27);
+  --error-icon: rgb(220 38 38);
   --color-bg: 240 244 248;
   --color-sidebar: 226 234 242;
   --color-accent: 200 218 234;
@@ -98,6 +106,28 @@ body {
 .cm-completionMatchedText {
   text-decoration: underline !important;
   color: rgb(var(--color-highlight)) !important;
+}
+
+/* Error states — theme-aware */
+.error-box {
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.error-box-icon { color: var(--error-icon); flex-shrink: 0; margin-top: 2px; }
+.error-box-text { color: var(--error-text); font-size: 12px; white-space: pre-wrap; font-family: monospace; }
+
+.error-banner {
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 6px;
+  color: var(--error-icon);
+  font-size: 12px;
+  padding: 6px 8px;
 }
 
 /* CodeMirror overrides */

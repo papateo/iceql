@@ -15,7 +15,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        ConnectionPool::MySQL(p) => {
+        ConnectionPool::MySQL(p, _) => {
             sqlx::query("SELECT 1")
                 .execute(p)
                 .await

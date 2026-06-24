@@ -148,14 +148,9 @@ export default function App() {
 
         {/* Connection error banner */}
         {connectError && (
-          <div className="mx-2 mt-2 px-2 py-1.5 bg-red-900/30 border border-red-800/50 rounded text-red-400 text-xs">
-            {connectError}
-            <button
-              className="ml-2 underline"
-              onClick={() => setConnectError(null)}
-            >
-              dismiss
-            </button>
+          <div className="error-banner mx-2 mt-2 flex items-center gap-1">
+            <span className="flex-1">{connectError}</span>
+            <button className="underline opacity-70 hover:opacity-100" onClick={() => setConnectError(null)}>dismiss</button>
           </div>
         )}
         <ConnectionsPanel
