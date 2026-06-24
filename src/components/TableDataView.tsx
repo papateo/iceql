@@ -11,7 +11,10 @@ import {
   ChevronDown,
   X,
   Search,
+  Download,
 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 import { tableRef, buildUpdateStatements } from "../utils/sql";
 
@@ -69,6 +72,65 @@ export default function TableDataView({
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const lastClickedRow = useRef<number | null>(null);
+  const isDragging = useRef(false);
+  const dragMode = useRef<"select" | "deselect">("select");
+
+  const allSelected = rows.length > 0 && selectedRows.size === rows.length;
+  const someSelected = selectedRows.size > 0 && !allSelected;
+
+  const toggleAll = () => setSelectedRows(allSelected ? new Set() : new Set(rows.map((_, i) => i)));
+
+  const handleRowMouseDown = useCallback((e: React.MouseEvent, rowIdx: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    if (e.shiftKey && lastClickedRow.current !== null) {
+      const from = Math.min(lastClickedRow.current, rowIdx);
+      const to = Math.max(lastClickedRow.current, rowIdx);
+      setSelectedRows((prev) => { const n = new Set(prev); for (let i = from; i <= to; i++) n.add(i); return n; });
+    } else {
+      isDragging.current = true;
+      dragMode.current = selectedRows.has(rowIdx) ? "deselect" : "select";
+      lastClickedRow.current = rowIdx;
+      setSelectedRows((prev) => { const n = new Set(prev); dragMode.current === "select" ? n.add(rowIdx) : n.delete(rowIdx); return n; });
+    }
+  }, [selectedRows]);
+
+  const handleRowMouseEnter = useCallback((rowIdx: number) => {
+    if (!isDragging.current) return;
+    setSelectedRows((prev) => { const n = new Set(prev); dragMode.current === "select" ? n.add(rowIdx) : n.delete(rowIdx); return n; });
+  }, []);
+
+  useEffect(() => {
+    const onUp = () => { isDragging.current = false; };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, []);
+
+  const exportData = async (format: "csv" | "json", forceAll = false) => {
+    const exportRows = !forceAll && selectedRows.size > 0
+      ? rows.filter((_, i) => selectedRows.has(i))
+      : rows;
+    let content: string;
+    if (format === "csv") {
+      const esc = (v: unknown) => {
+        const s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+        return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      content = `${columns.map(esc).join(",")}\n${exportRows.map((r) => columns.map((c) => esc(r[c])).join(",")).join("\n")}`;
+    } else {
+      content = JSON.stringify(exportRows, null, 2);
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    const path = await save({
+      defaultPath: `${table}_${date}.${format}`,
+      filters: format === "csv" ? [{ name: "CSV", extensions: ["csv"] }] : [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (path) await writeTextFile(path, content);
+  };
 
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -281,6 +343,17 @@ export default function TableDataView({
             {rows.length.toLocaleString()} / {totalCount.toLocaleString()} rows · {execMs}ms
           </span>
         )}
+        {selectedRows.size > 0 && (
+          <span className="text-highlight text-xs">{selectedRows.size} selected</span>
+        )}
+        {rows.length > 0 && !hasEdits && (
+          <div className="flex items-center gap-0.5 text-text-muted text-[10px]">
+            <Download size={10} />
+            <button onClick={() => exportData("csv")} className="px-1 py-0.5 hover:text-text-primary transition-colors">CSV</button>
+            <span>·</span>
+            <button onClick={() => exportData("json")} className="px-1 py-0.5 hover:text-text-primary transition-colors">JSON</button>
+          </div>
+        )}
 
         {hasEdits && (
           <div className="flex items-center gap-2">
@@ -314,6 +387,9 @@ export default function TableDataView({
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-accent border-b border-border">
+                <th className="px-2 py-2 w-8 border-r border-border text-center">
+                  <input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = someSelected; }} onChange={toggleAll} className="cursor-pointer accent-highlight" title="Select all" />
+                </th>
                 <th className="px-2 py-2 text-left text-text-muted font-medium w-10 border-r border-border select-none">#</th>
                 {columns.map((col) => {
                   const isSorted = sortCol === col;
@@ -331,7 +407,7 @@ export default function TableDataView({
               </tr>
               {showFilter && (
                 <tr className="bg-sidebar border-b border-border">
-                  <td className="w-10 border-r border-border" />
+                  <td className="w-8 border-r border-border" /><td className="w-10 border-r border-border" />
                   {columns.map((col) => (
                     <td key={col} className="px-1 py-1 border-r border-border last:border-r-0">
                       <div className="relative">
@@ -347,13 +423,23 @@ export default function TableDataView({
             </thead>
             <tbody>
               {virtualizer.getVirtualItems().length > 0 && (
-                <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
+                <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
               )}
               {virtualizer.getVirtualItems().map((vRow) => {
                 const displayRow = displayedRows[vRow.index];
                 const rowIdx = displayRow.__idx;
+                const isSelected = selectedRows.has(rowIdx);
                 return (
-                  <tr key={rowIdx} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
+                  <tr
+                    key={rowIdx}
+                    className={`border-b border-border/50 transition-colors select-none ${isSelected ? "bg-highlight/10" : "hover:bg-accent/30"}`}
+                    onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
+                    onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                    onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); if (!selectedRows.has(rowIdx)) { lastClickedRow.current = rowIdx; setSelectedRows(new Set([rowIdx])); } }}
+                  >
+                    <td className="px-2 py-1.5 w-8 border-r border-border/50 text-center" onMouseDown={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={isSelected} onChange={() => { lastClickedRow.current = rowIdx; setSelectedRows((prev) => { const n = new Set(prev); n.has(rowIdx) ? n.delete(rowIdx) : n.add(rowIdx); return n; }); }} className="cursor-pointer accent-highlight" />
+                    </td>
                     <td className="px-2 py-1.5 text-text-muted w-10 border-r border-border/50 text-right select-none">{rowIdx + 1}</td>
                     {columns.map((col) => {
                       const isActive = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
@@ -386,7 +472,7 @@ export default function TableDataView({
                 const items = virtualizer.getVirtualItems();
                 const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
                 return bottomPad > 0
-                  ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
+                  ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
                   : null;
               })()}
             </tbody>
@@ -490,6 +576,61 @@ export default function TableDataView({
           <span className={infiniteScroll ? "text-highlight" : ""}>Infinite scroll</span>
         </button>
       </div>
+
+      {ctxMenu && (
+        <TableCtxMenu
+          x={ctxMenu.x} y={ctxMenu.y}
+          selectedCount={selectedRows.size} totalCount={rows.length}
+          onExport={(fmt, scope) => exportData(fmt, scope === "all")}
+          onSelectAll={() => setSelectedRows(new Set(rows.map((_, i) => i)))}
+          onDeselectAll={() => setSelectedRows(new Set())}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TableCtxMenu({ x, y, selectedCount, totalCount, onExport, onSelectAll, onDeselectAll, onClose }: {
+  x: number; y: number;
+  selectedCount: number; totalCount: number;
+  onExport: (format: "csv" | "json", scope: "selected" | "all") => void;
+  onSelectAll: () => void; onDeselectAll: () => void; onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", h);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  }, [onClose]);
+
+  const menuW = 220;
+  const left = x + menuW > window.innerWidth ? x - menuW : x;
+  const top = y + 240 > window.innerHeight ? y - 240 : y;
+
+  const btn = (label: string, icon: React.ReactNode, onClick: () => void) => (
+    <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs text-text-primary hover:bg-accent transition-colors">
+      <span className="text-text-muted w-3.5 flex-shrink-0">{icon}</span>{label}
+    </button>
+  );
+
+  return (
+    <div ref={ref} style={{ position: "fixed", left, top, zIndex: 9999, minWidth: menuW }} className="bg-sidebar border border-border rounded-lg shadow-2xl py-1">
+      {selectedCount > 0 && <>
+        <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">{selectedCount} row{selectedCount > 1 ? "s" : ""} selected</div>
+        {btn("Export selected as CSV", <Download size={12} />, () => onExport("csv", "selected"))}
+        {btn("Export selected as JSON", <Download size={12} />, () => onExport("json", "selected"))}
+        <div className="my-1 border-t border-border" />
+      </>}
+      <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">All {totalCount} rows (this page)</div>
+      {btn("Export all as CSV", <Download size={12} />, () => onExport("csv", "all"))}
+      {btn("Export all as JSON", <Download size={12} />, () => onExport("json", "all"))}
+      <div className="my-1 border-t border-border" />
+      {selectedCount < totalCount
+        ? btn("Select all rows", <Check size={12} />, onSelectAll)
+        : btn("Deselect all", <X size={12} />, onDeselectAll)}
     </div>
   );
 }
