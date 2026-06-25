@@ -47,6 +47,8 @@ export interface Tab {
   database: string;
   table?: string;
   query?: string;
+  /** Preview (temporary) tab — opened via single click, replaced by the next single click. */
+  preview?: boolean;
 }
 
 export interface QueryLog {

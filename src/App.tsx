@@ -238,6 +238,7 @@ export default function App() {
               activeTabId={store.activeTabId}
               onSelect={store.setActiveTabId}
               onClose={store.closeTab}
+              onPromote={store.promoteTab}
               onNewQuery={handleNewQuery}
               canNewQuery={store.activeConnections.size > 0}
             />

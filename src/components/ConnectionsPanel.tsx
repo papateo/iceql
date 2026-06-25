@@ -54,7 +54,7 @@ interface Props {
   onDelete: (id: string) => void;
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
-  onOpenTable: (configId: string, dbName: string, tableName: string) => void;
+  onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
   onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
 }
@@ -142,16 +142,16 @@ export default function ConnectionsPanel({
   return (
     <div className="flex flex-col h-full">
       {/* Tab header */}
-      <div className="flex items-center border-b border-border flex-shrink-0">
+      <div className="flex items-center gap-1 border-b border-border flex-shrink-0 px-2 py-1.5">
         <button
           onClick={() => setSidebarTab("connections")}
-          className={`flex-1 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 -mb-px ${sidebarTab === "connections" ? "border-highlight text-highlight" : "border-transparent text-text-muted hover:text-text-secondary"}`}
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${sidebarTab === "connections" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
         >
           Connections
         </button>
         <button
           onClick={() => setSidebarTab("pinned")}
-          className={`flex-1 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 -mb-px flex items-center justify-center gap-1.5 ${sidebarTab === "pinned" ? "border-highlight text-highlight" : "border-transparent text-text-muted hover:text-text-secondary"}`}
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${sidebarTab === "pinned" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
         >
           <Pin size={11} />
           Pinned
@@ -164,7 +164,7 @@ export default function ConnectionsPanel({
         {sidebarTab === "connections" && (
           <button
             onClick={() => { setEditingConn(undefined); setShowModal(true); }}
-            className="p-2 mr-1 rounded hover:bg-accent text-text-muted hover:text-highlight transition-colors flex-shrink-0"
+            className="p-1.5 rounded-lg hover:bg-accent text-text-muted hover:text-highlight transition-colors flex-shrink-0"
             title="Add connection"
           >
             <Plus size={14} />
@@ -413,7 +413,7 @@ function DatabaseNode({
   connectionName: string;
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
-  onOpenTable: (configId: string, dbName: string, tableName: string) => void;
+  onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
   onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
   onContextMenu: (e: React.MouseEvent, items: ContextMenuEntry[]) => void;
@@ -518,7 +518,7 @@ function TableNode({
   configId: string;
   dbType: string;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
-  onOpenTable: (configId: string, dbName: string, tableName: string) => void;
+  onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
   onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
   onContextMenu: (e: React.MouseEvent, items: ContextMenuEntry[]) => void;
@@ -563,15 +563,21 @@ function TableNode({
     <div>
       <div
         className="relative flex items-center gap-1 pl-9 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
-        onClick={() => onExpandTable(configId, dbName, table.name)}
-        onDoubleClick={() => onOpenTable(configId, dbName, table.name)}
+        onClick={() => onOpenTable(configId, dbName, table.name, true)}
+        onDoubleClick={() => onOpenTable(configId, dbName, table.name, false)}
         onContextMenu={(e) => onContextMenu(e, tableMenuItems)}
       >
-        {isExpanded ? (
-          <ChevronDown size={11} className="text-text-muted" />
-        ) : (
-          <ChevronRight size={11} className="text-text-muted" />
-        )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onExpandTable(configId, dbName, table.name); }}
+          className="flex-shrink-0 p-0.5 -ml-0.5 rounded hover:bg-accent text-text-muted hover:text-text-primary transition-colors"
+          title={isExpanded ? "Collapse columns" : "Expand columns"}
+        >
+          {isExpanded ? (
+            <ChevronDown size={11} />
+          ) : (
+            <ChevronRight size={11} />
+          )}
+        </button>
         <Table size={12} className="text-blue-300" />
         <span className="flex-1 text-xs text-text-secondary ml-1 truncate min-w-0">{table.name}</span>
         {/* Pin indicator when not hovered */}

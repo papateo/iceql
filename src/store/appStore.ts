@@ -419,26 +419,46 @@ export function useAppStore() {
   );
 
   const openTableTab = useCallback(
-    (configId: string, dbName: string, tableName: string) => {
+    (configId: string, dbName: string, tableName: string, preview = false) => {
       const tabId = `${configId}:${dbName}:${tableName}`;
-      const existing = tabs.find((t) => t.id === tabId);
-      if (existing) {
-        setActiveTabId(tabId);
-        return;
-      }
-      const tab: Tab = {
-        id: tabId,
-        title: tableName,
-        type: "table",
-        connectionId: configId,
-        database: dbName,
-        table: tableName,
-      };
-      setTabs((prev) => [...prev, tab]);
+      setTabs((prev) => {
+        const existing = prev.find((t) => t.id === tabId);
+        if (existing) {
+          // Already open. Opening it permanently (double click) clears the preview flag.
+          if (!preview && existing.preview) {
+            return prev.map((t) => (t.id === tabId ? { ...t, preview: false } : t));
+          }
+          return prev;
+        }
+        const tab: Tab = {
+          id: tabId,
+          title: tableName,
+          type: "table",
+          connectionId: configId,
+          database: dbName,
+          table: tableName,
+          preview,
+        };
+        // A single-click preview reuses the existing preview slot instead of stacking tabs.
+        if (preview) {
+          const previewIdx = prev.findIndex((t) => t.preview);
+          if (previewIdx !== -1) {
+            const next = [...prev];
+            next[previewIdx] = tab;
+            return next;
+          }
+        }
+        return [...prev, tab];
+      });
       setActiveTabId(tabId);
     },
-    [tabs]
+    []
   );
+
+  // Promote a preview tab to a permanent one (e.g. on double-click of the tab itself).
+  const promoteTab = useCallback((tabId: string) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId && t.preview ? { ...t, preview: false } : t)));
+  }, []);
 
   const openQueryTab = useCallback(
     (configId: string, dbName: string, initialQuery = "") => {
@@ -587,6 +607,7 @@ export function useAppStore() {
     expandTable,
     loadSchemaForDb,
     openTableTab,
+    promoteTab,
     openQueryTab,
     closeTab,
     updateTabQuery,
