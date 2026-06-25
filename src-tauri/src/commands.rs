@@ -22,7 +22,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        ConnectionPool::SQLite(p) => {
+        ConnectionPool::SQLite(p, _) => {
             sqlx::query("SELECT 1")
                 .execute(p)
                 .await
@@ -120,25 +120,9 @@ pub async fn begin_transaction(
             .get(&connection_id)
             .ok_or_else(|| "Connection not found".to_string())?;
         match pool {
-            ConnectionPool::Postgres(_, cfg) => {
-                crate::models::ConnectionConfig { db_type: "postgresql".to_string(), ..cfg.clone() }
-            }
-            ConnectionPool::MySQL(_, cfg) => {
-                crate::models::ConnectionConfig { db_type: "mysql".to_string(), ..cfg.clone() }
-            }
-            ConnectionPool::SQLite(_) => {
-                crate::models::ConnectionConfig {
-                    id: String::new(),
-                    name: String::new(),
-                    db_type: "sqlite".to_string(),
-                    host: String::new(),
-                    port: 0,
-                    username: String::new(),
-                    password: String::new(),
-                    database: database.clone(),
-                    filename: Some(database.clone()),
-                }
-            }
+            ConnectionPool::Postgres(_, cfg)
+            | ConnectionPool::MySQL(_, cfg)
+            | ConnectionPool::SQLite(_, cfg) => cfg.clone(),
         }
     };
 

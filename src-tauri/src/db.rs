@@ -6,7 +6,7 @@ use std::time::Instant;
 pub enum ConnectionPool {
     Postgres(sqlx::PgPool, ConnectionConfig),
     MySQL(sqlx::MySqlPool, ConnectionConfig),
-    SQLite(sqlx::SqlitePool),
+    SQLite(sqlx::SqlitePool, ConnectionConfig),
 }
 
 impl ConnectionPool {
@@ -49,7 +49,7 @@ impl ConnectionPool {
                 let pool = sqlx::SqlitePool::connect(&url)
                     .await
                     .map_err(|e| format!("SQLite connection failed: {e}"))?;
-                Ok(ConnectionPool::SQLite(pool))
+                Ok(ConnectionPool::SQLite(pool, config.clone()))
             }
             other => Err(format!("Unsupported database type: {other}")),
         }
@@ -98,7 +98,7 @@ impl ConnectionPool {
                     .connect(&url)
                     .await
                     .map_err(|e| format!("SQLite connection failed: {e}"))?;
-                Ok(ConnectionPool::SQLite(pool))
+                Ok(ConnectionPool::SQLite(pool, config.clone()))
             }
             other => Err(format!("Unsupported database type: {other}")),
         }
@@ -122,7 +122,7 @@ impl ConnectionPool {
                     execute_mysql(pool, query, start).await
                 }
             }
-            ConnectionPool::SQLite(pool) => {
+            ConnectionPool::SQLite(pool, _) => {
                 if is_dml(query) {
                     execute_dml_sqlite(pool, query, start).await
                 } else {
@@ -160,7 +160,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::SQLite(_) => {
+            ConnectionPool::SQLite(_, _) => {
                 // SQLite doesn't have multiple databases; return "main"
                 Ok(vec!["main".to_string()])
             }
@@ -224,7 +224,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::SQLite(pool) => {
+            ConnectionPool::SQLite(pool, _) => {
                 let rows = sqlx::query(
                     "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name",
                 )
@@ -315,7 +315,7 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::SQLite(pool) => {
+            ConnectionPool::SQLite(pool, _) => {
                 let query = format!("PRAGMA table_info({table})");
                 let rows = sqlx::query(&query)
                     .fetch_all(pool)
@@ -384,7 +384,7 @@ impl ConnectionPool {
                     execute_mysql(pool_ref, query, start).await
                 }
             }
-            ConnectionPool::SQLite(pool) => {
+            ConnectionPool::SQLite(pool, _) => {
                 if is_dml(query) {
                     execute_dml_sqlite(pool, query, start).await
                 } else {
@@ -453,7 +453,7 @@ impl ConnectionPool {
                 result.row_count = total as u64;
                 Ok(result)
             }
-            ConnectionPool::SQLite(pool) => {
+            ConnectionPool::SQLite(pool, _) => {
                 count_query = format!("SELECT COUNT(*) FROM \"{table}\"");
                 data_query = format!(
                     "SELECT * FROM \"{table}\" LIMIT {page_size} OFFSET {offset}"
