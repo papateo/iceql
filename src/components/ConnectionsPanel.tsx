@@ -145,13 +145,13 @@ export default function ConnectionsPanel({
       <div className="flex items-center gap-1 border-b border-border flex-shrink-0 px-2 py-1.5">
         <button
           onClick={() => setSidebarTab("connections")}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${sidebarTab === "connections" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
+          className={`flex-1 h-8 flex items-center justify-center text-xs font-semibold rounded-lg transition-colors ${sidebarTab === "connections" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
         >
           Connections
         </button>
         <button
           onClick={() => setSidebarTab("pinned")}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${sidebarTab === "pinned" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
+          className={`flex-1 h-8 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${sidebarTab === "pinned" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
         >
           <Pin size={11} />
           Pinned
