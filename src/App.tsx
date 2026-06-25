@@ -308,6 +308,10 @@ export default function App() {
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
                     onRunQuery={(q) => store.executeQuery(tab.connectionId, tab.database, q)}
+                    onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
+                    onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}
+                    onCommitTransaction={(txId) => store.commitTransaction(txId)}
+                    onRollbackTransaction={(txId) => store.rollbackTransaction(txId)}
                   />
                 )}
               </div>

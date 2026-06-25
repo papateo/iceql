@@ -55,6 +55,83 @@ impl ConnectionPool {
         }
     }
 
+    /// Create a dedicated single-connection pool for transaction use.
+    pub async fn connect_single(config: &ConnectionConfig, database: &str) -> Result<Self, String> {
+        match config.db_type.as_str() {
+            "postgresql" => {
+                let url = format!(
+                    "postgres://{}:{}@{}:{}/{}",
+                    urlencoding_simple(&config.username),
+                    urlencoding_simple(&config.password),
+                    config.host,
+                    config.port,
+                    database
+                );
+                let pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .map_err(|e| format!("PostgreSQL connection failed: {e}"))?;
+                Ok(ConnectionPool::Postgres(pool, config.clone()))
+            }
+            "mysql" => {
+                let url = format!(
+                    "mysql://{}:{}@{}:{}/{}",
+                    urlencoding_simple(&config.username),
+                    urlencoding_simple(&config.password),
+                    config.host,
+                    config.port,
+                    database
+                );
+                let pool = sqlx::mysql::MySqlPoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .map_err(|e| format!("MySQL connection failed: {e}"))?;
+                Ok(ConnectionPool::MySQL(pool, config.clone()))
+            }
+            "sqlite" => {
+                let path = config.filename.as_deref().unwrap_or(&config.database);
+                let url = format!("sqlite:{path}");
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .map_err(|e| format!("SQLite connection failed: {e}"))?;
+                Ok(ConnectionPool::SQLite(pool))
+            }
+            other => Err(format!("Unsupported database type: {other}")),
+        }
+    }
+
+    /// Execute a raw query on this pool (used inside transactions).
+    pub async fn execute_raw(&self, query: &str) -> Result<QueryResult, String> {
+        let start = Instant::now();
+        match self {
+            ConnectionPool::Postgres(pool, _) => {
+                if is_dml(query) {
+                    execute_dml_pg(pool, query, start).await
+                } else {
+                    execute_pg(pool, query, start).await
+                }
+            }
+            ConnectionPool::MySQL(pool, _) => {
+                if is_dml(query) {
+                    execute_dml_mysql(pool, query, start).await
+                } else {
+                    execute_mysql(pool, query, start).await
+                }
+            }
+            ConnectionPool::SQLite(pool) => {
+                if is_dml(query) {
+                    execute_dml_sqlite(pool, query, start).await
+                } else {
+                    execute_sqlite(pool, query, start).await
+                }
+            }
+        }
+    }
+
     pub async fn get_databases(&self) -> Result<Vec<String>, String> {
         match self {
             ConnectionPool::Postgres(pool, _) => {

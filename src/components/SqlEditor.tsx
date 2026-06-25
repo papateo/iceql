@@ -8,7 +8,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Compartment, Prec } from "@codemirror/state";
 import { autocompletion, type CompletionContext, type Completion } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
-import { Play, Loader2, Database } from "lucide-react";
+import { Play, Loader2, Database, GitBranch, Check, X } from "lucide-react";
 
 interface Props {
   value: string;
@@ -21,6 +21,10 @@ interface Props {
   schema: Record<string, string[]>;
   isDark: boolean;
   onDatabaseChange: (db: string) => void;
+  inTransaction: boolean;
+  onToggleTransaction: () => void;
+  onCommitTransaction: () => void;
+  onRollbackTransaction: () => void;
 }
 
 const lightTheme = createTheme({
@@ -111,7 +115,7 @@ const customTheme = EditorView.theme({
   },
 });
 
-export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, isDark, onDatabaseChange }: Props) {
+export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, isDark, onDatabaseChange, inTransaction, onToggleTransaction, onCommitTransaction, onRollbackTransaction }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
 
   const sqlCompartment = useMemo(() => new Compartment(), []);
@@ -168,7 +172,15 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-sidebar">
-        <span className="text-text-muted text-xs">SQL Editor — Cmd+Enter to run</span>
+        <span className="text-text-muted text-xs flex items-center gap-2">
+          SQL Editor — Cmd+Enter to run
+          {inTransaction && (
+            <span className="flex items-center gap-1 text-amber-400 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Transaction active
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-2">
           <div className="relative flex items-center">
             <Database size={13} className="absolute left-2 text-text-muted pointer-events-none" />
@@ -187,6 +199,38 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
               <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
+          {inTransaction ? (
+            <>
+              <button
+                onClick={onRollbackTransaction}
+                disabled={running}
+                title="Rollback transaction"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+              >
+                <X size={13} />
+                Rollback
+              </button>
+              <button
+                onClick={onCommitTransaction}
+                disabled={running}
+                title="Commit transaction"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+              >
+                <Check size={13} />
+                Commit
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={onToggleTransaction}
+              disabled={running}
+              title="Begin transaction"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accent/60 border border-border text-text-secondary hover:bg-accent hover:text-text-primary transition-colors disabled:opacity-50"
+            >
+              <GitBranch size={13} />
+              Txn
+            </button>
+          )}
           <button
             onClick={() => onRun(getSelectedOrAll())}
             disabled={running}

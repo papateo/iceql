@@ -2,6 +2,7 @@ use crate::db::ConnectionPool;
 use crate::models::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
 use crate::persistence;
 use crate::ConnectionStore;
+use crate::TransactionStore;
 use uuid::Uuid;
 
 #[tauri::command]
@@ -104,6 +105,90 @@ pub async fn execute_query(
         .get(&connection_id)
         .ok_or_else(|| "Connection not found".to_string())?;
     pool.execute_query_in(&database, &query).await
+}
+
+#[tauri::command]
+pub async fn begin_transaction(
+    connection_id: String,
+    database: String,
+    state: tauri::State<'_, ConnectionStore>,
+    tx_store: tauri::State<'_, TransactionStore>,
+) -> Result<String, String> {
+    let config = {
+        let store = state.lock().await;
+        let pool = store
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+        match pool {
+            ConnectionPool::Postgres(_, cfg) => {
+                crate::models::ConnectionConfig { db_type: "postgresql".to_string(), ..cfg.clone() }
+            }
+            ConnectionPool::MySQL(_, cfg) => {
+                crate::models::ConnectionConfig { db_type: "mysql".to_string(), ..cfg.clone() }
+            }
+            ConnectionPool::SQLite(_) => {
+                crate::models::ConnectionConfig {
+                    id: String::new(),
+                    name: String::new(),
+                    db_type: "sqlite".to_string(),
+                    host: String::new(),
+                    port: 0,
+                    username: String::new(),
+                    password: String::new(),
+                    database: database.clone(),
+                    filename: Some(database.clone()),
+                }
+            }
+        }
+    };
+
+    let tx_pool = ConnectionPool::connect_single(&config, &database).await?;
+    tx_pool.execute_raw("BEGIN").await?;
+
+    let tx_id = Uuid::new_v4().to_string();
+    tx_store.0.lock().await.insert(tx_id.clone(), tx_pool);
+    Ok(tx_id)
+}
+
+#[tauri::command]
+pub async fn execute_in_transaction(
+    transaction_id: String,
+    query: String,
+    tx_store: tauri::State<'_, TransactionStore>,
+) -> Result<QueryResult, String> {
+    let store = tx_store.0.lock().await;
+    let pool = store
+        .get(&transaction_id)
+        .ok_or_else(|| "Transaction not found".to_string())?;
+    pool.execute_raw(&query).await
+}
+
+#[tauri::command]
+pub async fn commit_transaction(
+    transaction_id: String,
+    tx_store: tauri::State<'_, TransactionStore>,
+) -> Result<QueryResult, String> {
+    let mut store = tx_store.0.lock().await;
+    let pool = store
+        .get(&transaction_id)
+        .ok_or_else(|| "Transaction not found".to_string())?;
+    let result = pool.execute_raw("COMMIT").await?;
+    store.remove(&transaction_id);
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn rollback_transaction(
+    transaction_id: String,
+    tx_store: tauri::State<'_, TransactionStore>,
+) -> Result<QueryResult, String> {
+    let mut store = tx_store.0.lock().await;
+    let pool = store
+        .get(&transaction_id)
+        .ok_or_else(|| "Transaction not found".to_string())?;
+    let result = pool.execute_raw("ROLLBACK").await?;
+    store.remove(&transaction_id);
+    Ok(result)
 }
 
 #[tauri::command]

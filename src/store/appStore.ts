@@ -532,6 +532,42 @@ export function useAppStore() {
 
   const clearLogs = useCallback(() => setQueryLogs([]), []);
 
+  const beginTransaction = useCallback(
+    async (configId: string, database: string): Promise<string> => {
+      const ac = activeConnections.get(configId);
+      if (!ac) throw new Error("Not connected");
+      return await invoke<string>("begin_transaction", {
+        connectionId: ac.connectionId,
+        database,
+      });
+    },
+    [activeConnections]
+  );
+
+  const executeInTransaction = useCallback(
+    async (transactionId: string, query: string): Promise<QueryResult> => {
+      return await invoke<QueryResult>("execute_in_transaction", {
+        transactionId,
+        query,
+      });
+    },
+    []
+  );
+
+  const commitTransaction = useCallback(
+    async (transactionId: string): Promise<QueryResult> => {
+      return await invoke<QueryResult>("commit_transaction", { transactionId });
+    },
+    []
+  );
+
+  const rollbackTransaction = useCallback(
+    async (transactionId: string): Promise<QueryResult> => {
+      return await invoke<QueryResult>("rollback_transaction", { transactionId });
+    },
+    []
+  );
+
   return {
     savedConnections,
     setSavedConnections,
@@ -556,6 +592,10 @@ export function useAppStore() {
     updateTabQuery,
     updateTabDatabase,
     executeQuery,
+    beginTransaction,
+    executeInTransaction,
+    commitTransaction,
+    rollbackTransaction,
     addLog,
     queryLogs,
     clearLogs,
