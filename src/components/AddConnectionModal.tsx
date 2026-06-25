@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { v4 as uuidv4 } from "uuid";
-import { X, Database, Loader2 } from "lucide-react";
+import { X, Database, Loader2, FolderOpen } from "lucide-react";
 import type { ConnectionConfig, DbType } from "../types";
 
 interface Props {
@@ -65,6 +66,26 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
 
   const isSqlite = form.db_type === "sqlite";
 
+  const browseSqliteFile = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "Select SQLite database file",
+      filters: [
+        { name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3", "db3"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (typeof selected === "string") {
+      set("filename", selected);
+      // Default the connection name to the file name if it's still empty.
+      if (!form.name.trim()) {
+        const base = selected.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") ?? "";
+        if (base) set("name", base);
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto">
@@ -113,12 +134,23 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
           {isSqlite ? (
             <div>
               <label className="block text-text-secondary text-sm mb-1">Database File Path</label>
-              <input
-                className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
-                value={form.filename ?? ""}
-                onChange={(e) => set("filename", e.target.value)}
-                placeholder="/path/to/database.db"
-              />
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                  value={form.filename ?? ""}
+                  onChange={(e) => set("filename", e.target.value)}
+                  placeholder="/path/to/database.db"
+                />
+                <button
+                  type="button"
+                  onClick={browseSqliteFile}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-accent border border-border text-text-secondary hover:bg-accent/70 hover:text-text-primary transition-colors whitespace-nowrap"
+                  title="Browse for database file"
+                >
+                  <FolderOpen size={15} />
+                  Browse
+                </button>
+              </div>
             </div>
           ) : (
             <>
