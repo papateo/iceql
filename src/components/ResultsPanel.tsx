@@ -83,10 +83,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const handleRowMouseDown = useCallback((e: React.MouseEvent, rowIdx: number) => {
     if (e.button !== 0) return;
-    e.preventDefault();
+    // Note: don't preventDefault here — it would block mouse text-selection inside the
+    // edit input. Text selection during row-drag is suppressed via `select-none` on the row.
 
     if (e.shiftKey && lastClickedRow.current !== null) {
-      // Range select
+      // Range select — add range without clearing existing selection
       const from = Math.min(lastClickedRow.current, rowIdx);
       const to = Math.max(lastClickedRow.current, rowIdx);
       setSelectedRows((prev) => {
@@ -94,19 +95,23 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
         for (let i = from; i <= to; i++) next.add(i);
         return next;
       });
-    } else {
-      // Start drag
-      isDragging.current = true;
-      dragStartRow.current = rowIdx;
-      dragMode.current = selectedRows.has(rowIdx) ? "deselect" : "select";
+    } else if (e.metaKey || e.ctrlKey) {
+      // Ctrl/Cmd+Click → toggle individual row
       lastClickedRow.current = rowIdx;
       setSelectedRows((prev) => {
         const next = new Set(prev);
-        if (dragMode.current === "select") next.add(rowIdx); else next.delete(rowIdx);
+        if (next.has(rowIdx)) next.delete(rowIdx); else next.add(rowIdx);
         return next;
       });
+    } else {
+      // Plain click — select only this row (clear others), drag will expand
+      isDragging.current = true;
+      dragStartRow.current = rowIdx;
+      dragMode.current = "select";
+      lastClickedRow.current = rowIdx;
+      setSelectedRows(new Set([rowIdx]));
     }
-  }, [selectedRows]);
+  }, []);
 
   const handleRowMouseEnter = useCallback((rowIdx: number) => {
     if (!isDragging.current) return;
@@ -175,6 +180,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const startEdit = (rowIdx: number, col: string) => {
     if (!editableTable) return;
     setCommitNotice(null);
+    setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
     const current = edits.has(editKey) ? edits.get(editKey) : data[rowIdx][col];
     setEditingCell({ rowIdx, col, value: current === null || current === undefined ? "" : String(current) });
@@ -301,7 +307,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           </div>
         )}
 
-        {selectedRows.size > 0 && (
+        {selectedRows.size > 0 && !editingCell && (
           <span className="text-highlight text-xs">{selectedRows.size} / {data.length} selected</span>
         )}
 
@@ -311,7 +317,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           <span className="text-red-400 truncate max-w-[320px]" title={commitError}>{commitError}</span>
         )}
 
-        {editableTable && selectedRows.size > 0 && (
+        {editableTable && selectedRows.size > 0 && !editingCell && (
           <button
             onClick={() => setShowDeleteConfirm(true)}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-red-400 hover:bg-red-500/10 transition-colors text-xs"
@@ -366,17 +372,13 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-accent border-b border-border">
-              <th className="px-2 py-2 w-8 border-r border-border text-center">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  ref={(el) => { if (el) el.indeterminate = someSelected; }}
-                  onChange={toggleAll}
-                  className="cursor-pointer accent-highlight"
-                  title="Select all"
-                />
+              <th
+                className={`px-2 py-2 text-center font-medium w-10 border-r border-border select-none cursor-pointer hover:bg-accent/60 transition-colors ${someSelected || allSelected ? "text-highlight" : "text-text-muted"}`}
+                onClick={toggleAll}
+                title={allSelected ? "Deselect all" : "Select all"}
+              >
+                #
               </th>
-              <th className="px-2 py-2 text-left text-text-muted font-medium w-10 border-r border-border select-none">#</th>
               {columns.map((col) => (
                 <th
                   key={col}
@@ -389,7 +391,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           </thead>
           <tbody>
             {virtualizer.getVirtualItems().length > 0 && (
-              <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
+              <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
             )}
             {virtualizer.getVirtualItems().map((vRow) => {
               const rowIdx = vRow.index;
@@ -397,23 +399,14 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
               return (
               <tr
                 key={rowIdx}
-                className={`border-b border-border/50 transition-colors select-none ${isSelected ? "bg-highlight/10" : "hover:bg-accent/40"}`}
-                onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
-                onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                className={`border-b border-border/50 transition-colors ${isSelected ? "bg-highlight/10" : "hover:bg-accent/40"}`}
                 onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); if (!selectedRows.has(rowIdx)) { lastClickedRow.current = rowIdx; setSelectedRows(new Set([rowIdx])); } }}
               >
-                <td className="px-2 py-1.5 w-8 border-r border-border/50 text-center" onMouseDown={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => {
-                      lastClickedRow.current = rowIdx;
-                      setSelectedRows((prev) => { const n = new Set(prev); if (n.has(rowIdx)) n.delete(rowIdx); else n.add(rowIdx); return n; });
-                    }}
-                    className="cursor-pointer accent-highlight"
-                  />
-                </td>
-                <td className="px-2 py-1.5 text-text-muted w-10 border-r border-border/50 text-right">
+                <td
+                  className={`px-2 py-1.5 w-10 border-r border-border/50 text-right select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
+                  onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
+                  onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                >
                   {rowIdx + 1}
                 </td>
                 {columns.map((col) => {
@@ -423,10 +416,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                   return (
                     <td
                       key={col}
+                      onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }}
                       onDoubleClick={() => startEdit(rowIdx, col)}
                       className={`px-3 py-1.5 border-r border-border/50 last:border-r-0 max-w-[400px] relative ${
                         edited ? "bg-highlight/10 text-highlight" : "text-text-primary"
-                      } ${editableTable ? "cursor-text" : ""}`}
+                      } ${editableTable ? "cursor-text" : ""} ${isEditing ? "select-text" : "select-none"}`}
                     >
                       {displayValue(cellValue(rowIdx, col))}
                       {isEditing && (
@@ -435,11 +429,13 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                           value={editingCell.value}
                           onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
                           onBlur={commitCellEdit}
+                          onMouseDown={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") commitCellEdit();
                             else if (e.key === "Escape") setEditingCell(null);
                           }}
-                          className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs"
+                          className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs selection:bg-highlight/40 selection:text-text-primary"
+                          style={{ userSelect: "text", WebkitUserSelect: "text" }}
                         />
                       )}
                     </td>
@@ -451,7 +447,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
               const items = virtualizer.getVirtualItems();
               const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
               return bottomPad > 0
-                ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 2} className="p-0 border-0" /></tr>
+                ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
                 : null;
             })()}
           </tbody>

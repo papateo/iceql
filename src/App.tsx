@@ -163,10 +163,10 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-bg text-text-primary overflow-hidden select-none">
+    <div className="flex h-screen bg-bg text-text-primary overflow-hidden">
       {/* Sidebar */}
       <div
-        className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden"
+        className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden select-none"
         style={{ width: sidebarWidth }}
       >
         {/* Logo */}
@@ -231,7 +231,7 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Tab bar + log button */}
-        <div className="flex items-center border-b border-border flex-shrink-0">
+        <div className="flex items-center border-b border-border flex-shrink-0 select-none">
           <div className="flex-1 overflow-hidden">
             <TabBar
               tabs={store.tabs}
