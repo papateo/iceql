@@ -13,6 +13,7 @@ import {
   Search,
   Download,
   Trash2,
+  Columns3,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -141,7 +142,26 @@ export default function TableDataView({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showFilter, setShowFilter] = useState(false);
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [showColumns, setShowColumns] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Columns the user has chosen to display (column-visibility checklist).
+  const visibleColumns = useMemo(() => columns.filter((c) => !hiddenColumns.has(c)), [columns, hiddenColumns]);
+
+  const toggleColumn = (col: string) => {
+    setHiddenColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(col)) {
+        next.delete(col);
+      } else {
+        // Always keep at least one column visible.
+        if (columns.length - next.size <= 1) return prev;
+        next.add(col);
+      }
+      return next;
+    });
+  };
 
   const ac = activeConnections.get(configId);
   const hasEdits = edits.size > 0;
@@ -366,6 +386,51 @@ export default function TableDataView({
         >
           <Search size={13} />
         </button>
+        <div className="relative">
+          <button
+            onClick={() => setShowColumns((v) => !v)}
+            className={`p-1.5 rounded transition-colors ${hiddenColumns.size > 0 || showColumns ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent hover:text-text-primary"}`}
+            title="Choose visible columns"
+          >
+            <Columns3 size={13} />
+          </button>
+          {showColumns && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowColumns(false)} />
+              <div className="absolute left-0 mt-1 z-50 w-56 bg-sidebar border border-border rounded-lg shadow-xl flex flex-col max-h-[60vh]">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
+                  <span className="text-xs font-semibold text-text-primary">
+                    Columns <span className="text-text-muted font-normal">{visibleColumns.length}/{columns.length}</span>
+                  </span>
+                  <button
+                    onClick={() => setHiddenColumns(new Set())}
+                    disabled={hiddenColumns.size === 0}
+                    className="text-[10px] text-text-muted hover:text-highlight disabled:opacity-40 disabled:hover:text-text-muted transition-colors"
+                  >
+                    Show all
+                  </button>
+                </div>
+                <div className="overflow-y-auto py-1">
+                  {columns.map((col) => {
+                    const visible = !hiddenColumns.has(col);
+                    return (
+                      <button
+                        key={col}
+                        onClick={() => toggleColumn(col)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/60 transition-colors"
+                      >
+                        <span className={`flex items-center justify-center w-3.5 h-3.5 rounded border flex-shrink-0 ${visible ? "bg-highlight border-highlight text-bg" : "border-border text-transparent"}`}>
+                          <Check size={10} />
+                        </span>
+                        <span className={`truncate ${visible ? "text-text-primary" : "text-text-muted"}`}>{col}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         <div className="flex-1" />
         {!hasEdits && totalCount > 0 && (
           <span className="text-text-muted text-xs">
@@ -433,7 +498,7 @@ export default function TableDataView({
                 >
                   #
                 </th>
-                {columns.map((col) => {
+                {visibleColumns.map((col) => {
                   const isSorted = sortCol === col;
                   return (
                     <th key={col} className="px-3 py-2 text-left text-text-secondary font-medium whitespace-nowrap border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group" onClick={() => handleSortClick(col)}>
@@ -450,7 +515,7 @@ export default function TableDataView({
               {showFilter && (
                 <tr className="bg-sidebar border-b border-border">
                   <td className="w-10 border-r border-border" />
-                  {columns.map((col) => (
+                  {visibleColumns.map((col) => (
                     <td key={col} className="px-1 py-1 border-r border-border last:border-r-0">
                       <div className="relative">
                         <input type="text" placeholder="Filter…" value={filters[col] ?? ""} onChange={(e) => setFilters((prev) => ({ ...prev, [col]: e.target.value }))} className="w-full text-[11px] bg-accent/60 border border-transparent focus:border-border rounded px-2 py-0.5 text-text-secondary placeholder:text-text-muted outline-none focus:bg-accent pr-5" />
@@ -465,7 +530,7 @@ export default function TableDataView({
             </thead>
             <tbody>
               {virtualizer.getVirtualItems().length > 0 && (
-                <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
+                <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={visibleColumns.length + 1} className="p-0 border-0" /></tr>
               )}
               {virtualizer.getVirtualItems().map((vRow) => {
                 const displayRow = displayedRows[vRow.index];
@@ -484,7 +549,7 @@ export default function TableDataView({
                     >
                       {rowIdx + 1}
                     </td>
-                    {columns.map((col) => {
+                    {visibleColumns.map((col) => {
                       const isActive = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
                       const edited = isEdited(rowIdx, col);
                       return (
@@ -516,7 +581,7 @@ export default function TableDataView({
                 const items = virtualizer.getVirtualItems();
                 const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
                 return bottomPad > 0
-                  ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
+                  ? <tr><td style={{ height: bottomPad }} colSpan={visibleColumns.length + 1} className="p-0 border-0" /></tr>
                   : null;
               })()}
             </tbody>
