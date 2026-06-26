@@ -231,7 +231,7 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Tab bar + log button */}
-        <div className="flex items-center border-b border-border flex-shrink-0 select-none">
+        <div className="flex items-center bg-sidebar border-b border-border flex-shrink-0 select-none">
           <div className="flex-1 overflow-hidden">
             <TabBar
               tabs={store.tabs}
