@@ -246,7 +246,7 @@ export default function App() {
           <button
             onClick={() => setShowLogs((v) => !v)}
             title="SQL Query Logs"
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs border-l border-border flex-shrink-0 transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 my-1.5 mr-2 text-xs rounded-lg flex-shrink-0 transition-colors ${
               showLogs
                 ? "bg-accent text-highlight"
                 : "text-text-muted hover:text-text-primary hover:bg-accent/50"
