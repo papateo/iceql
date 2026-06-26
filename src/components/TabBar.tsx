@@ -1,4 +1,4 @@
-import { X, Table, Code2, Plus } from "lucide-react";
+import { X, Table, Code2, Plus, Crosshair } from "lucide-react";
 import type { Tab } from "../types";
 
 interface Props {
@@ -7,11 +7,12 @@ interface Props {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onPromote: (id: string) => void;
+  onLocate: (tab: Tab) => void;
   onNewQuery: () => void;
   canNewQuery: boolean;
 }
 
-export default function TabBar({ tabs, activeTabId, onSelect, onClose, onPromote, onNewQuery, canNewQuery }: Props) {
+export default function TabBar({ tabs, activeTabId, onSelect, onClose, onPromote, onLocate, onNewQuery, canNewQuery }: Props) {
   if (tabs.length === 0) return null;
 
   return (
@@ -33,7 +34,15 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onPromote
             title={tab.preview ? "Preview tab — double-click to keep open" : undefined}
           >
             {tab.type === "table" ? (
-              <Table size={13} className={isActive ? "text-blue-300" : "text-text-muted"} />
+              <button
+                onClick={(e) => { e.stopPropagation(); onLocate(tab); }}
+                title="Show in structure"
+                className="relative flex-shrink-0 -ml-0.5 p-0.5 rounded leading-none"
+              >
+                {/* Table icon by default; on tab hover it morphs into a locate target. */}
+                <Table size={13} className={`block group-hover:hidden ${isActive ? "text-blue-300" : "text-text-muted"}`} />
+                <Crosshair size={13} className={`hidden group-hover:block ${isActive ? "text-blue-300" : "text-text-muted"} hover:text-highlight transition-colors`} />
+              </button>
             ) : (
               <Code2 size={13} className={isActive ? "text-highlight" : "text-text-muted"} />
             )}

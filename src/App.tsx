@@ -210,6 +210,7 @@ export default function App() {
           onDelete={store.deleteConnection}
           onExpandDb={store.expandDatabase}
           onExpandTable={store.expandTable}
+          locateTarget={store.locateTarget}
           onOpenTable={store.openTableTab}
           onOpenQuery={store.openQueryTab}
           onEditTable={(configId, dbName, tableName, dbType) => {
@@ -239,6 +240,7 @@ export default function App() {
               onSelect={store.setActiveTabId}
               onClose={store.closeTab}
               onPromote={store.promoteTab}
+              onLocate={(tab) => { if (tab.type === "table" && tab.table) store.locateTable(tab.connectionId, tab.database, tab.table); }}
               onNewQuery={handleNewQuery}
               canNewQuery={store.activeConnections.size > 0}
             />

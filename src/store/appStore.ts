@@ -160,6 +160,13 @@ export function useAppStore() {
     string | null
   >(null);
   const [queryLogs, setQueryLogs] = useState<QueryLog[]>([]);
+  // Transient "reveal this table in the sidebar tree" request, set by locateTable.
+  const [locateTarget, setLocateTarget] = useState<{
+    configId: string;
+    dbName: string;
+    tableName: string;
+    nonce: number;
+  } | null>(null);
 
   const addLog = useCallback((log: Omit<QueryLog, "id" | "timestamp">) => {
     setQueryLogs((prev) => [
@@ -306,6 +313,47 @@ export function useAppStore() {
           return next;
         });
       }
+    },
+    [activeConnections]
+  );
+
+  // Reveal a table in the sidebar tree: ensure its database is expanded (loading
+  // tables if needed, without toggling a collapse), then publish a locate request.
+  const locateTable = useCallback(
+    async (configId: string, dbName: string, tableName: string) => {
+      const ac = activeConnections.get(configId);
+      if (!ac) return;
+
+      if (!ac.expandedDbs.has(dbName)) {
+        let tables = ac.dbTables[dbName];
+        let dbError: string | null = null;
+        if (!tables) {
+          try {
+            tables = await invoke<TableInfo[]>("get_tables", {
+              connectionId: ac.connectionId,
+              database: dbName,
+            });
+          } catch (e) {
+            dbError = String(e);
+          }
+        }
+        setActiveConnections((prev) => {
+          const next = new Map(prev);
+          const conn = next.get(configId);
+          if (!conn) return prev;
+          const newExpanded = new Set(conn.expandedDbs);
+          newExpanded.add(dbName);
+          next.set(configId, {
+            ...conn,
+            expandedDbs: newExpanded,
+            ...(tables ? { dbTables: { ...conn.dbTables, [dbName]: tables } } : {}),
+            ...(dbError ? { dbErrors: { ...conn.dbErrors, [dbName]: dbError } } : {}),
+          });
+          return next;
+        });
+      }
+
+      setLocateTarget({ configId, dbName, tableName, nonce: Date.now() });
     },
     [activeConnections]
   );
@@ -605,6 +653,8 @@ export function useAppStore() {
     disconnectFromDb,
     expandDatabase,
     expandTable,
+    locateTable,
+    locateTarget,
     loadSchemaForDb,
     openTableTab,
     promoteTab,

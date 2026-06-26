@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -57,6 +57,7 @@ interface Props {
   onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
   onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
+  locateTarget: { configId: string; dbName: string; tableName: string; nonce: number } | null;
 }
 
 interface CtxState {
@@ -79,8 +80,11 @@ export default function ConnectionsPanel({
   onOpenTable,
   onOpenQuery,
   onEditTable,
+  locateTarget,
 }: Props) {
   const [sidebarTab, setSidebarTab] = useState<"connections" | "pinned">("connections");
+  // The table currently being revealed via "Show in structure" (briefly highlighted).
+  const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null);
   const [pinnedTables, setPinnedTables] = useState<PinnedTable[]>(loadPinned);
   const [showModal, setShowModal] = useState(false);
   const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
@@ -119,6 +123,26 @@ export default function ConnectionsPanel({
       return next;
     });
   };
+
+  // React to a "Show in structure" request: switch to the connections tab, make sure
+  // the owning connection is expanded, and briefly highlight the table row.
+  useEffect(() => {
+    if (!locateTarget) return;
+    const { configId, dbName, tableName, nonce } = locateTarget;
+    setSidebarTab("connections");
+    setCollapsedIds((prev) => {
+      if (!prev.has(configId)) return prev;
+      const next = new Set(prev);
+      next.delete(configId);
+      return next;
+    });
+    setHighlight({ key: `${configId}::${dbName}::${tableName}`, nonce });
+    const t = setTimeout(() => {
+      setHighlight((cur) => (cur && cur.nonce === nonce ? null : cur));
+    }, 1800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateTarget?.nonce]);
 
   const handleSave = (config: ConnectionConfig) => {
     if (editingConn) {
@@ -327,6 +351,7 @@ export default function ConnectionsPanel({
                   configId={conn.id}
                   dbType={conn.db_type}
                   connectionName={conn.name}
+                  highlight={highlight}
                   onExpandDb={onExpandDb}
                   onExpandTable={onExpandTable}
                   onOpenTable={onOpenTable}
@@ -396,6 +421,7 @@ function DatabaseNode({
   configId,
   dbType,
   connectionName,
+  highlight,
   onExpandDb,
   onExpandTable,
   onOpenTable,
@@ -411,6 +437,7 @@ function DatabaseNode({
   configId: string;
   dbType: string;
   connectionName: string;
+  highlight: { key: string; nonce: number } | null;
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
@@ -482,6 +509,7 @@ function DatabaseNode({
           configId={configId}
           dbType={dbType}
           connectionName={connectionName}
+          highlight={highlight}
           onExpandTable={onExpandTable}
           onOpenTable={onOpenTable}
           onOpenQuery={onOpenQuery}
@@ -503,6 +531,7 @@ function TableNode({
   configId,
   dbType,
   connectionName,
+  highlight,
   onExpandTable,
   onOpenTable,
   onOpenQuery,
@@ -517,6 +546,7 @@ function TableNode({
   ac: ActiveConnection;
   configId: string;
   dbType: string;
+  highlight: { key: string; nonce: number } | null;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
@@ -531,6 +561,14 @@ function TableNode({
   const isExpanded = ac.expandedTables.has(key);
   const columns = ac.dbColumns[key] ?? [];
   const pinned = pinnedTables.find((p) => p.configId === configId && p.dbName === dbName && p.tableName === table.name);
+
+  const rowRef = useRef<HTMLDivElement>(null);
+  const isLocated = highlight?.key === `${configId}::${dbName}::${table.name}`;
+  // When this row becomes the locate target, scroll it into view.
+  useEffect(() => {
+    if (isLocated) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLocated, highlight?.nonce]);
 
   const wrap = (name: string) => dbType === "postgresql" ? `"${name}"` : `\`${name}\``;
   const tbl = wrap(table.name);
@@ -562,7 +600,10 @@ function TableNode({
   return (
     <div>
       <div
-        className="relative flex items-center gap-1 pl-9 pr-2 py-1 hover:bg-accent/60 cursor-pointer group"
+        ref={rowRef}
+        className={`relative flex items-center gap-1 pl-9 pr-2 py-1 cursor-pointer group transition-colors ${
+          isLocated ? "bg-highlight/20 ring-1 ring-inset ring-highlight/50" : "hover:bg-accent/60"
+        }`}
         onClick={() => onOpenTable(configId, dbName, table.name, true)}
         onDoubleClick={() => onOpenTable(configId, dbName, table.name, false)}
         onContextMenu={(e) => onContextMenu(e, tableMenuItems)}
