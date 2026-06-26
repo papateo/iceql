@@ -139,7 +139,7 @@ export default function ConnectionsPanel({
     setHighlight({ key: `${configId}::${dbName}::${tableName}`, nonce });
     const t = setTimeout(() => {
       setHighlight((cur) => (cur && cur.nonce === nonce ? null : cur));
-    }, 1800);
+    }, 2800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locateTarget?.nonce]);
@@ -601,8 +601,9 @@ function TableNode({
     <div>
       <div
         ref={rowRef}
-        className={`relative flex items-center gap-1 pl-9 pr-2 py-1 cursor-pointer group transition-colors ${
-          isLocated ? "bg-highlight/20 ring-1 ring-inset ring-highlight/50" : "hover:bg-accent/60"
+        key={isLocated ? `loc-${highlight?.nonce}` : `row-${table.name}`}
+        className={`relative flex items-center gap-1 pl-9 pr-2 py-1 cursor-pointer group ${
+          isLocated ? "animate-locate-pulse" : "transition-colors hover:bg-accent/60"
         }`}
         onClick={() => onOpenTable(configId, dbName, table.name, true)}
         onDoubleClick={() => onOpenTable(configId, dbName, table.name, false)}
