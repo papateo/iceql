@@ -156,6 +156,11 @@ export function useAppStore() {
   >(new Map());
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // The data source (connection) whose tab workspace is currently shown. Tabs are
+  // scoped per data source — the tab bar only lists tabs for this connection.
+  const [activeDataSourceId, setActiveDataSourceId] = useState<string | null>(null);
+  // Remembers the last-active tab for each data source, so switching back restores it.
+  const [activeTabByDs, setActiveTabByDs] = useState<Record<string, string>>({});
   const [selectedConnectionId, setSelectedConnectionId] = useState<
     string | null
   >(null);
@@ -228,12 +233,14 @@ export function useAppStore() {
         return next;
       });
       setSelectedConnectionId(config.id);
+      setActiveDataSourceId(config.id);
       return connectionId;
     },
     []
   );
 
   const disconnectFromDb = useCallback(async (configId: string) => {
+    let remainingDsIds: string[] = [];
     setActiveConnections((prev) => {
       const ac = prev.get(configId);
       if (ac) {
@@ -243,10 +250,27 @@ export function useAppStore() {
       }
       const next = new Map(prev);
       next.delete(configId);
+      remainingDsIds = [...next.keys()];
       return next;
     });
     setSelectedConnectionId((prev) => (prev === configId ? null : prev));
-    setTabs((prev) => prev.filter((t) => t.connectionId !== configId));
+    setActiveTabByDs((m) => {
+      const copy = { ...m };
+      delete copy[configId];
+      return copy;
+    });
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.connectionId !== configId);
+      // If the disconnected source was active, move focus to another connected one.
+      setActiveDataSourceId((curDs) => {
+        if (curDs !== configId) return curDs;
+        const nextDs = remainingDsIds[0] ?? null;
+        const dsTabs = nextDs ? next.filter((t) => t.connectionId === nextDs) : [];
+        setActiveTabId(dsTabs[dsTabs.length - 1]?.id ?? null);
+        return nextDs;
+      });
+      return next;
+    });
   }, []);
 
   const expandDatabase = useCallback(
@@ -499,6 +523,8 @@ export function useAppStore() {
         return [...prev, tab];
       });
       setActiveTabId(tabId);
+      setActiveDataSourceId(configId);
+      setActiveTabByDs((m) => ({ ...m, [configId]: tabId }));
     },
     []
   );
@@ -507,6 +533,24 @@ export function useAppStore() {
   const promoteTab = useCallback((tabId: string) => {
     setTabs((prev) => prev.map((t) => (t.id === tabId && t.preview ? { ...t, preview: false } : t)));
   }, []);
+
+  // Activate a tab and focus its owning data source.
+  const selectTab = useCallback((tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    setActiveTabId(tabId);
+    if (tab) {
+      setActiveDataSourceId(tab.connectionId);
+      setActiveTabByDs((m) => ({ ...m, [tab.connectionId]: tabId }));
+    }
+  }, [tabs]);
+
+  // Switch the active data source, restoring its last-active tab (or its newest tab).
+  const selectDataSource = useCallback((configId: string) => {
+    setActiveDataSourceId(configId);
+    const dsTabs = tabs.filter((t) => t.connectionId === configId);
+    const remembered = dsTabs.find((t) => t.id === activeTabByDs[configId]);
+    setActiveTabId(remembered?.id ?? dsTabs[dsTabs.length - 1]?.id ?? null);
+  }, [tabs, activeTabByDs]);
 
   const openQueryTab = useCallback(
     (configId: string, dbName: string, initialQuery = "") => {
@@ -521,6 +565,8 @@ export function useAppStore() {
       };
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tabId);
+      setActiveDataSourceId(configId);
+      setActiveTabByDs((m) => ({ ...m, [configId]: tabId }));
     },
     []
   );
@@ -528,13 +574,23 @@ export function useAppStore() {
   const closeTab = useCallback(
     (tabId: string) => {
       setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.id === tabId);
+        const closed = prev.find((t) => t.id === tabId);
         const next = prev.filter((t) => t.id !== tabId);
-        if (activeTabId === tabId && next.length > 0) {
-          const newIdx = Math.min(idx, next.length - 1);
-          setActiveTabId(next[newIdx].id);
-        } else if (next.length === 0) {
-          setActiveTabId(null);
+        if (closed) {
+          const dsId = closed.connectionId;
+          const dsIdx = prev.filter((t) => t.connectionId === dsId).findIndex((t) => t.id === tabId);
+          const dsTabsAfter = next.filter((t) => t.connectionId === dsId);
+          const fallback = dsTabsAfter[Math.min(dsIdx, dsTabsAfter.length - 1)]?.id ?? null;
+          setActiveTabByDs((m) => {
+            const copy = { ...m };
+            if (fallback) copy[dsId] = fallback; else delete copy[dsId];
+            return copy;
+          });
+          // If the closed tab was active, fall back within the same data source.
+          if (activeTabId === tabId) {
+            setActiveTabId(fallback);
+            setActiveDataSourceId(dsId);
+          }
         }
         return next;
       });
@@ -644,6 +700,10 @@ export function useAppStore() {
     setTabs,
     activeTabId,
     setActiveTabId,
+    activeDataSourceId,
+    setActiveDataSourceId,
+    selectTab,
+    selectDataSource,
     selectedConnectionId,
     setSelectedConnectionId,
     addConnection,

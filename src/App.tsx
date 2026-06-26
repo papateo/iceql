@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Database, ScrollText, Settings } from "lucide-react";
+import { Database, ScrollText, Settings, Plus } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ConnectionsPanel from "./components/ConnectionsPanel";
+import ConnectionManager from "./components/ConnectionManager";
 import TabBar from "./components/TabBar";
 import TableDataView from "./components/TableDataView";
 import QueryView from "./components/QueryView";
@@ -49,6 +50,7 @@ export default function App() {
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
   const [connectError, setConnectError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [showConnManager, setShowConnManager] = useState(false);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
   const [tableSettings, setTableSettings] = useState<
     Record<string, { pageSize: number; infiniteScroll: boolean }>
@@ -101,8 +103,9 @@ export default function App() {
       );
       if (restoredTabs.length > 0) {
         store.setTabs(restoredTabs);
-        const restoredActive = restoredTabs.find((t) => t.id === session.activeTabId);
-        store.setActiveTabId(restoredActive?.id ?? restoredTabs[0].id);
+        const restoredActive = restoredTabs.find((t) => t.id === session.activeTabId) ?? restoredTabs[0];
+        store.setActiveTabId(restoredActive.id);
+        store.setActiveDataSourceId(restoredActive.connectionId);
       }
 
       // Allow saving from now on
@@ -133,16 +136,14 @@ export default function App() {
   };
 
   const handleNewQuery = () => {
-    // Prefer the active tab's connection/database, else fall back to the first active connection.
-    const active = store.tabs.find((t) => t.id === store.activeTabId);
-    if (active) {
-      store.openQueryTab(active.connectionId, active.database);
-      return;
-    }
-    const first = store.activeConnections.values().next().value;
-    if (first) {
-      store.openQueryTab(first.config.id, first.databases[0] ?? "");
-    }
+    // New queries belong to the active data source. Reuse the active tab's database
+    // when it lives in that data source, otherwise fall back to the first database.
+    const dsId = store.activeDataSourceId;
+    const ac = dsId ? store.activeConnections.get(dsId) : undefined;
+    const target = ac ?? store.activeConnections.values().next().value;
+    if (!target) return;
+    const active = store.tabs.find((t) => t.id === store.activeTabId && t.connectionId === target.config.id);
+    store.openQueryTab(target.config.id, active?.database ?? target.databases[0] ?? "");
   };
 
   const handleDividerMouseDown = (e: React.MouseEvent) => {
@@ -162,35 +163,47 @@ export default function App() {
     window.addEventListener("mouseup", onUp);
   };
 
+  const dsColor = (t: string) =>
+    t === "postgresql" ? "text-blue-400"
+    : t === "mysql" ? "text-orange-400"
+    : t === "sqlite" ? "text-green-400"
+    : "text-text-secondary";
+
   return (
     <div className="flex h-screen bg-bg text-text-primary overflow-hidden">
+      {/* Data source rail — one icon per connected data source, each with its own tabs */}
+      <div className="flex flex-col items-center gap-1 py-2 px-1.5 bg-bg border-r border-border flex-shrink-0">
+        {store.savedConnections
+          .filter((c) => store.activeConnections.has(c.id))
+          .map((c) => {
+            const isActive = store.activeDataSourceId === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => store.selectDataSource(c.id)}
+                title={c.name}
+                className={`relative w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
+              >
+                {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-highlight" />}
+                <Database size={18} className={dsColor(c.db_type)} />
+              </button>
+            );
+          })}
+        {store.activeConnections.size > 0 && <div className="w-6 h-px bg-border my-0.5" />}
+        <button
+          onClick={() => setShowConnManager(true)}
+          title="Manage connections"
+          className="w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:text-highlight hover:bg-accent/50 transition-colors"
+        >
+          <Plus size={18} />
+        </button>
+      </div>
+
       {/* Sidebar */}
       <div
         className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden select-none"
         style={{ width: sidebarWidth }}
       >
-        {/* Logo */}
-        <div className="flex items-center border-b border-border">
-          <div
-            className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-accent/40 transition-colors group flex-1 min-w-0"
-            onClick={() => openUrl("https://iceql.com")}
-            title="iceql.com"
-          >
-            <img src="/icon.png" alt="iceql" className="w-9 h-9 flex-shrink-0 rounded-lg" />
-            <div className="flex flex-col min-w-0">
-              <span className="font-bold text-text-primary tracking-wide leading-tight group-hover:text-highlight transition-colors">IceQL</span>
-              <span className="text-[10px] text-text-secondary leading-tight truncate">The cool way to manage your database</span>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 mr-2 rounded hover:bg-accent text-text-muted hover:text-highlight transition-colors flex-shrink-0"
-            title="Settings"
-          >
-            <Settings size={15} />
-          </button>
-        </div>
-
         {/* Connection error banner */}
         {connectError && (
           <div className="error-banner mx-2 mt-2 flex items-center gap-1">
@@ -201,13 +214,7 @@ export default function App() {
         <ConnectionsPanel
           savedConnections={store.savedConnections}
           activeConnections={store.activeConnections}
-          selectedConnectionId={store.selectedConnectionId}
-          connectingIds={connectingIds}
-          onConnect={handleConnect}
-          onDisconnect={store.disconnectFromDb}
-          onAdd={store.addConnection}
-          onUpdate={store.updateConnection}
-          onDelete={store.deleteConnection}
+          activeDataSourceId={store.activeDataSourceId}
           onExpandDb={store.expandDatabase}
           onExpandTable={store.expandTable}
           locateTarget={store.locateTarget}
@@ -235,14 +242,14 @@ export default function App() {
         <div className="flex items-center bg-sidebar border-b border-border flex-shrink-0 select-none">
           <div className="flex-1 overflow-hidden">
             <TabBar
-              tabs={store.tabs}
+              tabs={store.tabs.filter((t) => t.connectionId === store.activeDataSourceId)}
               activeTabId={store.activeTabId}
-              onSelect={store.setActiveTabId}
+              onSelect={store.selectTab}
               onClose={store.closeTab}
               onPromote={store.promoteTab}
               onLocate={(tab) => { if (tab.type === "table" && tab.table) store.locateTable(tab.connectionId, tab.database, tab.table); }}
               onNewQuery={handleNewQuery}
-              canNewQuery={store.activeConnections.size > 0}
+              canNewQuery={!!store.activeDataSourceId && store.activeConnections.has(store.activeDataSourceId)}
             />
           </div>
           <button
@@ -269,13 +276,15 @@ export default function App() {
         <div className="flex flex-1 overflow-hidden">
           {/* Tab content — all open tabs stay mounted so switching back doesn't refetch */}
           <div className="flex-1 overflow-hidden relative">
-            {store.tabs.length === 0 && (
+            {!store.tabs.some((t) => t.id === store.activeTabId) && (
               <div className="flex flex-col items-center justify-center h-full text-text-muted gap-4">
                 <Database size={48} className="opacity-20" />
                 <div className="text-center">
                   <p className="text-text-secondary text-sm">No tab open</p>
                   <p className="text-xs mt-1">
-                    Connect to a database and open a table or start a new query
+                    {store.activeDataSourceId
+                      ? "Open a table or start a new query for this data source"
+                      : "Connect to a database and open a table or start a new query"}
                   </p>
                 </div>
               </div>
@@ -364,6 +373,20 @@ export default function App() {
         <EditTableModal
           target={editTableTarget}
           onClose={() => setEditTableTarget(null)}
+        />
+      )}
+      {showConnManager && (
+        <ConnectionManager
+          savedConnections={store.savedConnections}
+          activeConnections={store.activeConnections}
+          connectingIds={connectingIds}
+          onConnect={handleConnect}
+          onDisconnect={store.disconnectFromDb}
+          onAdd={store.addConnection}
+          onUpdate={store.updateConnection}
+          onDelete={store.deleteConnection}
+          onSelectDataSource={store.selectDataSource}
+          onClose={() => setShowConnManager(false)}
         />
       )}
     </div>

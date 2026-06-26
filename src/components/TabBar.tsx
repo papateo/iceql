@@ -13,7 +13,8 @@ interface Props {
 }
 
 export default function TabBar({ tabs, activeTabId, onSelect, onClose, onPromote, onLocate, onNewQuery, canNewQuery }: Props) {
-  if (tabs.length === 0) return null;
+  // Keep the bar (with its "+" button) when a data source is active but has no tabs yet.
+  if (tabs.length === 0 && !canNewQuery) return null;
 
   return (
     <div className="flex items-center gap-1 bg-sidebar border-b border-border overflow-x-auto flex-shrink-0 px-2 py-1.5">

@@ -1,10 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
-  Plus,
   Trash2,
-  Edit2,
-  Plug,
-  PlugZap,
   Database,
   ChevronRight,
   ChevronDown,
@@ -39,19 +35,12 @@ function savePinned(items: PinnedTable[]) {
   localStorage.setItem(PINNED_KEY, JSON.stringify(items));
 }
 import type { ConnectionConfig, ActiveConnection } from "../types";
-import AddConnectionModal from "./AddConnectionModal";
 import ContextMenu, { type ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
   savedConnections: ConnectionConfig[];
   activeConnections: Map<string, ActiveConnection>;
-  selectedConnectionId: string | null;
-  connectingIds: Set<string>;
-  onConnect: (config: ConnectionConfig) => void;
-  onDisconnect: (configId: string) => void;
-  onAdd: (config: ConnectionConfig) => void;
-  onUpdate: (config: ConnectionConfig) => void;
-  onDelete: (id: string) => void;
+  activeDataSourceId: string | null;
   onExpandDb: (configId: string, dbName: string) => void;
   onExpandTable: (configId: string, dbName: string, tableName: string) => void;
   onOpenTable: (configId: string, dbName: string, tableName: string, preview?: boolean) => void;
@@ -66,15 +55,19 @@ interface CtxState {
   items: ContextMenuEntry[];
 }
 
+const dbTypeIcon = (type: string) => {
+  const colors: Record<string, string> = {
+    postgresql: "text-blue-400",
+    mysql: "text-orange-400",
+    sqlite: "text-green-400",
+  };
+  return colors[type] ?? "text-text-secondary";
+};
+
 export default function ConnectionsPanel({
   savedConnections,
   activeConnections,
-  connectingIds,
-  onConnect,
-  onDisconnect,
-  onAdd,
-  onUpdate,
-  onDelete,
+  activeDataSourceId,
   onExpandDb,
   onExpandTable,
   onOpenTable,
@@ -82,13 +75,10 @@ export default function ConnectionsPanel({
   onEditTable,
   locateTarget,
 }: Props) {
-  const [sidebarTab, setSidebarTab] = useState<"connections" | "pinned">("connections");
   // The table currently being revealed via "Show in structure" (briefly highlighted).
   const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null);
   const [pinnedTables, setPinnedTables] = useState<PinnedTable[]>(loadPinned);
-  const [showModal, setShowModal] = useState(false);
-  const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [pinnedOpen, setPinnedOpen] = useState(true);
   const [ctx, setCtx] = useState<CtxState | null>(null);
 
   const pinTable = useCallback((item: PinnedTable) => {
@@ -113,29 +103,11 @@ export default function ConnectionsPanel({
     e.stopPropagation();
     setCtx({ x: e.clientX, y: e.clientY, items });
   }, []);
-  const [deletingConn, setDeletingConn] = useState<ConnectionConfig | null>(null);
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
 
-  const toggleCollapse = (id: string) => {
-    setCollapsedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  // React to a "Show in structure" request: switch to the connections tab, make sure
-  // the owning connection is expanded, and briefly highlight the table row.
+  // Briefly highlight a table when it's revealed via "Show in structure".
   useEffect(() => {
     if (!locateTarget) return;
     const { configId, dbName, tableName, nonce } = locateTarget;
-    setSidebarTab("connections");
-    setCollapsedIds((prev) => {
-      if (!prev.has(configId)) return prev;
-      const next = new Set(prev);
-      next.delete(configId);
-      return next;
-    });
     setHighlight({ key: `${configId}::${dbName}::${tableName}`, nonce });
     const t = setTimeout(() => {
       setHighlight((cur) => (cur && cur.nonce === nonce ? null : cur));
@@ -144,272 +116,98 @@ export default function ConnectionsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locateTarget?.nonce]);
 
-  const handleSave = (config: ConnectionConfig) => {
-    if (editingConn) {
-      onUpdate(config);
-    } else {
-      onAdd(config);
-    }
-    setShowModal(false);
-    setEditingConn(undefined);
-  };
+  const activeConn = savedConnections.find((c) => c.id === activeDataSourceId);
+  const ac = activeDataSourceId ? activeConnections.get(activeDataSourceId) : undefined;
+  const dsPinned = pinnedTables.filter((p) => p.configId === activeDataSourceId);
 
-  const dbTypeIcon = (type: string) => {
-    const colors: Record<string, string> = {
-      postgresql: "text-blue-400",
-      mysql: "text-orange-400",
-      sqlite: "text-green-400",
-    };
-    return colors[type] ?? "text-text-secondary";
-  };
+  if (!activeConn) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-text-muted text-xs gap-3 px-6 text-center">
+        <Database size={26} className="opacity-30" />
+        <span>No data source selected.<br />Use the rail on the left — click <span className="text-highlight">+</span> to add or connect a connection.</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Tab header */}
-      <div className="flex items-center gap-1 border-b border-border flex-shrink-0 px-2 py-1.5">
-        <button
-          onClick={() => setSidebarTab("connections")}
-          className={`flex-1 h-8 flex items-center justify-center text-xs font-semibold rounded-lg transition-colors ${sidebarTab === "connections" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
-        >
-          Connections
-        </button>
-        <button
-          onClick={() => setSidebarTab("pinned")}
-          className={`flex-1 h-8 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${sidebarTab === "pinned" ? "bg-highlight/15 text-highlight ring-1 ring-inset ring-highlight/30" : "text-text-muted hover:text-text-secondary hover:bg-accent/50"}`}
-        >
-          <Pin size={11} />
-          Pinned
-          {pinnedTables.length > 0 && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${sidebarTab === "pinned" ? "bg-highlight/20 text-highlight" : "bg-accent text-text-muted"}`}>
-              {pinnedTables.length}
-            </span>
-          )}
-        </button>
-        {sidebarTab === "connections" && (
+      {/* Active data source header */}
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0">
+        <Database size={15} className={dbTypeIcon(activeConn.db_type)} />
+        <span className="text-sm font-semibold text-text-primary truncate flex-1">{activeConn.name}</span>
+        {ac && <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="Connected" />}
+      </div>
+
+      {/* Pinned tables for this data source */}
+      {dsPinned.length > 0 && (
+        <div className="flex-shrink-0 border-b border-border">
           <button
-            onClick={() => { setEditingConn(undefined); setShowModal(true); }}
-            className="p-1.5 rounded-lg hover:bg-accent text-text-muted hover:text-highlight transition-colors flex-shrink-0"
-            title="Add connection"
+            onClick={() => setPinnedOpen((v) => !v)}
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-text-muted hover:text-text-secondary transition-colors"
           >
-            <Plus size={14} />
+            {pinnedOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            <Pin size={11} className="text-highlight" />
+            <span className="flex-1 text-left">Pinned</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-text-muted">{dsPinned.length}</span>
           </button>
+          {pinnedOpen && (
+            <div className="pb-1">
+              {dsPinned.map((p) => (
+                <div
+                  key={p.id}
+                  className="group flex items-center gap-2 pl-7 pr-2 py-1 hover:bg-accent/60 cursor-pointer"
+                  onClick={() => onOpenTable(p.configId, p.dbName, p.tableName)}
+                  title={p.dbName}
+                >
+                  <Table size={12} className="text-blue-300 flex-shrink-0" />
+                  <span className="flex-1 min-w-0 truncate">
+                    <span className="text-xs text-text-secondary">{p.tableName}</span>
+                    <span className="text-[10px] text-text-muted ml-1.5">{p.dbName}</span>
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); unpinTable(p.id); }}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+                    title="Unpin"
+                  >
+                    <PinOff size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Structure: databases → tables of the active data source */}
+      <div className="flex-1 overflow-y-auto py-1">
+        {ac ? (
+          ac.databases.map((dbName) => (
+            <DatabaseNode
+              key={dbName}
+              dbName={dbName}
+              ac={ac}
+              configId={activeConn.id}
+              dbType={activeConn.db_type}
+              connectionName={activeConn.name}
+              highlight={highlight}
+              onExpandDb={onExpandDb}
+              onExpandTable={onExpandTable}
+              onOpenTable={onOpenTable}
+              onOpenQuery={onOpenQuery}
+              onEditTable={onEditTable}
+              onContextMenu={openCtx}
+              pinnedTables={pinnedTables}
+              onPin={pinTable}
+              onUnpin={unpinTable}
+            />
+          ))
+        ) : (
+          <div className="px-3 py-6 text-xs text-text-muted text-center">This connection is not active.</div>
         )}
       </div>
 
-      {/* Pinned panel */}
-      {sidebarTab === "pinned" && (
-        <div className="flex-1 overflow-y-auto">
-          {pinnedTables.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-text-muted text-xs gap-2 px-4 text-center">
-              <Pin size={22} className="opacity-30" />
-              <span>No pinned tables yet.<br />Hover a table and click <Pin size={10} className="inline" /> to pin it.</span>
-            </div>
-          ) : (
-            <div className="py-1">
-              {pinnedTables.map((p) => {
-                const ac = activeConnections.get(p.configId);
-                const isConnected = !!ac;
-                return (
-                  <div
-                    key={p.id}
-                    className={`group flex items-center gap-2 pl-3 pr-2 py-1.5 hover:bg-accent/60 cursor-pointer ${isConnected ? "" : "opacity-40"}`}
-                    onClick={() => isConnected && onOpenTable(p.configId, p.dbName, p.tableName)}
-                    title={isConnected ? undefined : "Connection not active"}
-                  >
-                    <Table size={12} className="text-blue-300 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-text-secondary truncate">{p.tableName}</div>
-                      <div className="text-[10px] text-text-muted truncate">{p.connectionName} · {p.dbName}</div>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); unpinTable(p.id); }}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-                      title="Unpin"
-                    >
-                      <PinOff size={11} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Connections panel */}
-      {sidebarTab === "connections" && <div className="flex-1 overflow-y-auto">
-        {savedConnections.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-32 text-text-muted text-xs gap-2">
-            <Database size={24} className="opacity-40" />
-            <span>No connections yet</span>
-          </div>
-        )}
-
-        {savedConnections.map((conn) => {
-          const ac = activeConnections.get(conn.id);
-          const isConnected = !!ac;
-          const isConnecting = connectingIds.has(conn.id);
-          const isCollapsed = collapsedIds.has(conn.id);
-
-          return (
-            <div key={conn.id}>
-              {/* Connection row */}
-              <div
-                className="flex items-center gap-1 px-2 py-1.5 hover:bg-accent/60 group cursor-pointer"
-                onMouseEnter={() => setHoveredId(conn.id)}
-                onMouseLeave={() => setHoveredId(null)}
-                onDoubleClick={() => !isConnected && !isConnecting && onConnect(conn)}
-                onContextMenu={(e) => {
-                  const db = ac?.databases[0] ?? "";
-                  const isPg = conn.db_type === "postgresql";
-                  const isSqlite = conn.db_type === "sqlite";
-                  const items: import("./ContextMenu").ContextMenuEntry[] = [
-                    ...(isConnected ? [{ label: "New Query", icon: <Code2 size={12} />, onClick: () => onOpenQuery(conn.id, db) }] : []),
-                    ...(isConnected && !isSqlite ? [
-                      { separator: true as const },
-                      isPg
-                        ? { label: "Create Schema", icon: <FilePlus2 size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE SCHEMA "new_schema";`) }
-                        : { label: "Create Database", icon: <FilePlus2 size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE DATABASE \`new_database\`;`) },
-                      isPg
-                        ? { label: "Create Database", icon: <Database size={12} />, onClick: () => onOpenQuery(conn.id, db, `CREATE DATABASE new_database;`) }
-                        : null,
-                    ].filter(Boolean) as import("./ContextMenu").ContextMenuEntry[] : []),
-                    ...(!isConnected && !isConnecting ? [
-                      { label: "Connect", icon: <Plug size={12} />, onClick: () => onConnect(conn) },
-                    ] : []),
-                    { separator: true as const },
-                    { label: "Edit Connection", icon: <Edit2 size={12} />, onClick: () => { setEditingConn(conn); setShowModal(true); } },
-                    { label: "Delete Connection", icon: <Trash2 size={12} />, danger: true, onClick: () => setDeletingConn(conn) },
-                  ];
-                  openCtx(e, items);
-                }}
-              >
-                {isConnected ? (
-                  <button
-                    onClick={() => toggleCollapse(conn.id)}
-                    className="text-text-muted flex-shrink-0"
-                  >
-                    {isCollapsed
-                      ? <ChevronRight size={13} />
-                      : <ChevronDown size={13} />}
-                  </button>
-                ) : (
-                  <span className="w-[13px] flex-shrink-0" />
-                )}
-                <Database size={14} className={dbTypeIcon(conn.db_type)} />
-                <span className="flex items-center gap-1.5 flex-1 min-w-0 ml-1">
-                  <span className="text-sm text-text-primary truncate">{conn.name}</span>
-                  {isConnected && <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />}
-                </span>
-
-                {/* Right side: fixed layout, all elements always in DOM */}
-                <div className="flex items-center gap-0.5 flex-shrink-0">
-                  {/* Spinner: visible only while connecting, occupies same slot as edit button */}
-                  <div className={`p-1 transition-opacity ${isConnecting ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
-                    <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                  <button
-                    onClick={() => { setEditingConn(conn); setShowModal(true); }}
-                    className={`p-1 rounded hover:bg-border text-text-muted hover:text-text-primary transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-                    title="Edit"
-                  >
-                    <Edit2 size={12} />
-                  </button>
-                  <button
-                    onClick={() => setDeletingConn(conn)}
-                    className={`p-1 rounded hover:bg-border text-text-muted hover:text-red-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-                    title="Delete"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  {isConnected ? (
-                    <button
-                      onClick={() => onDisconnect(conn.id)}
-                      className={`p-1 rounded hover:bg-border text-green-400 hover:text-red-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-                      title="Disconnect"
-                    >
-                      <PlugZap size={12} />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onConnect(conn)}
-                      className={`p-1 rounded hover:bg-border text-text-muted hover:text-green-400 transition-opacity ${!isConnecting && hoveredId === conn.id ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-                      title="Connect"
-                    >
-                      <Plug size={12} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Database tree */}
-              {isConnected && !isCollapsed && ac.databases.map((dbName) => (
-                <DatabaseNode
-                  key={dbName}
-                  dbName={dbName}
-                  ac={ac}
-                  configId={conn.id}
-                  dbType={conn.db_type}
-                  connectionName={conn.name}
-                  highlight={highlight}
-                  onExpandDb={onExpandDb}
-                  onExpandTable={onExpandTable}
-                  onOpenTable={onOpenTable}
-                  onOpenQuery={onOpenQuery}
-                  onEditTable={onEditTable}
-                  onContextMenu={openCtx}
-                  pinnedTables={pinnedTables}
-                  onPin={pinTable}
-                  onUnpin={unpinTable}
-                />
-              ))}
-            </div>
-          );
-        })}
-      </div>}
-
-      {showModal && (
-        <AddConnectionModal
-          initial={editingConn}
-          onSave={handleSave}
-          onClose={() => { setShowModal(false); setEditingConn(undefined); }}
-        />
-      )}
-
       {ctx && (
         <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />
-      )}
-
-      {deletingConn && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-sidebar border border-border rounded-lg shadow-xl w-[340px] p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="p-2 rounded-full bg-red-900/30 text-red-400">
-                <Trash2 size={16} />
-              </div>
-              <h2 className="text-sm font-semibold text-text-primary">Delete connection</h2>
-            </div>
-            <p className="text-xs text-text-secondary leading-relaxed mb-5">
-              Are you sure you want to delete{" "}
-              <span className="font-medium text-text-primary">{deletingConn.name}</span>? This action
-              cannot be undone.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeletingConn(null)}
-                className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => { onDelete(deletingConn.id); setDeletingConn(null); }}
-                className="px-3 py-1.5 rounded text-xs bg-red-600 text-white hover:bg-red-500 font-medium transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
