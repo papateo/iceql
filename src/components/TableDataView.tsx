@@ -490,7 +490,7 @@ export default function TableDataView({
                       return (
                         <td key={col} className={`relative border-r border-border/50 last:border-r-0 max-w-[400px] ${isActive ? "select-text" : "select-none"} ${edited ? "bg-highlight/10" : ""}`} onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }} onDoubleClick={() => startEdit(rowIdx, col)}>
                           {isActive ? (
-                            <input ref={inputRef} className="w-full h-full px-3 py-1.5 bg-surface border border-highlight outline-none text-text-primary text-xs font-mono selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value}
+                            <input ref={inputRef} className="w-full h-full px-3 py-1.5 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value}
                               onChange={(e) => setEditingCell((prev) => prev ? { ...prev, value: e.target.value } : null)}
                               onMouseDown={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
