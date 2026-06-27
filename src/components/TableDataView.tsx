@@ -132,10 +132,12 @@ export default function TableDataView({
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
-  const exportData = async (format: "csv" | "json", forceAll = false) => {
+  const exportData = async (format: "csv" | "json" | "sql", forceAll = false) => {
     const exportRows = !forceAll && selectedRows.size > 0
       ? rows.filter((_, i) => selectedRows.has(i))
       : rows;
+    const dbType = ac?.config.db_type;
+    const qi = (n: string) => quoteIdent(dbType, n);
     let content: string;
     if (format === "csv") {
       const esc = (v: unknown) => {
@@ -143,13 +145,27 @@ export default function TableDataView({
         return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
       };
       content = `${columns.map(esc).join(",")}\n${exportRows.map((r) => columns.map((c) => esc(r[c])).join(",")).join("\n")}`;
+    } else if (format === "sql") {
+      const colList = columns.map(qi).join(", ");
+      const tref = tableRef(dbType, database, table);
+      content = exportRows
+        .map((r) => {
+          const vals = columns.map((c) => sqlLiteral(r[c])).join(", ");
+          return `INSERT INTO ${tref} (${colList}) VALUES (${vals});`;
+        })
+        .join("\n");
     } else {
       content = JSON.stringify(exportRows, null, 2);
     }
     const date = new Date().toISOString().slice(0, 10);
+    const ext = format === "sql" ? "sql" : format;
     const path = await save({
-      defaultPath: `${table}_${date}.${format}`,
-      filters: format === "csv" ? [{ name: "CSV", extensions: ["csv"] }] : [{ name: "JSON", extensions: ["json"] }],
+      defaultPath: `${table}_${date}.${ext}`,
+      filters: format === "csv"
+        ? [{ name: "CSV", extensions: ["csv"] }]
+        : format === "sql"
+        ? [{ name: "SQL", extensions: ["sql"] }]
+        : [{ name: "JSON", extensions: ["json"] }],
     });
     if (path) await writeTextFile(path, content);
   };
@@ -573,6 +589,8 @@ export default function TableDataView({
             <button onClick={() => exportData("csv")} className="px-1 py-0.5 hover:text-text-primary transition-colors">CSV</button>
             <span>·</span>
             <button onClick={() => exportData("json")} className="px-1 py-0.5 hover:text-text-primary transition-colors">JSON</button>
+            <span>·</span>
+            <button onClick={() => exportData("sql")} className="px-1 py-0.5 hover:text-text-primary transition-colors">SQL</button>
           </div>
         )}
 
@@ -928,7 +946,7 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
   onCopyRows: () => void;
   onCopyRowsCSV: () => void;
   onCopyRowsInsertSQL: () => void;
-  onExport: (format: "csv" | "json", scope: "selected" | "all") => void;
+  onExport: (format: "csv" | "json" | "sql", scope: "selected" | "all") => void;
   onSelectAll: () => void; onDeselectAll: () => void; onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -966,11 +984,13 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
         <div className="my-1 border-t border-border" />
         {btn("Export selected as CSV", <Download size={12} />, () => onExport("csv", "selected"))}
         {btn("Export selected as JSON", <Download size={12} />, () => onExport("json", "selected"))}
+        {btn("Export selected as SQL Insert", <Download size={12} />, () => onExport("sql", "selected"))}
         <div className="my-1 border-t border-border" />
       </>}
       <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">All {totalCount} rows (this page)</div>
       {btn("Export all as CSV", <Download size={12} />, () => onExport("csv", "all"))}
       {btn("Export all as JSON", <Download size={12} />, () => onExport("json", "all"))}
+      {btn("Export all as SQL Insert", <Download size={12} />, () => onExport("sql", "all"))}
       <div className="my-1 border-t border-border" />
       {selectedCount < totalCount
         ? btn("Select all rows", <Check size={12} />, onSelectAll)
