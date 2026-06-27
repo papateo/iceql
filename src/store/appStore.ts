@@ -598,6 +598,23 @@ export function useAppStore() {
     [activeTabId]
   );
 
+  const reorderTabs = useCallback((connectionId: string, newOrder: string[]) => {
+    setTabs((prev) => {
+      const others = prev.filter((t) => t.connectionId !== connectionId);
+      const reordered = newOrder.map((id) => prev.find((t) => t.id === id)!).filter(Boolean);
+      return [...others, ...reordered];
+    });
+  }, []);
+
+  const closeOtherTabs = useCallback((tabId: string, connectionId: string) => {
+    setTabs((prev) => {
+      const kept = prev.filter((t) => t.id === tabId || t.connectionId !== connectionId);
+      setActiveTabByDs((m) => ({ ...m, [connectionId]: tabId }));
+      setActiveTabId(tabId);
+      return kept;
+    });
+  }, []);
+
   const updateTabQuery = useCallback(
     (tabId: string, query: string) => {
       setTabs((prev) =>
@@ -720,6 +737,8 @@ export function useAppStore() {
     promoteTab,
     openQueryTab,
     closeTab,
+    reorderTabs,
+    closeOtherTabs,
     updateTabQuery,
     updateTabDatabase,
     executeQuery,

@@ -299,6 +299,8 @@ export default function App() {
               activeTabId={store.activeTabId}
               onSelect={store.selectTab}
               onClose={store.closeTab}
+              onCloseOthers={(id) => { if (store.activeDataSourceId) store.closeOtherTabs(id, store.activeDataSourceId); }}
+              onReorder={(newOrder) => { if (store.activeDataSourceId) store.reorderTabs(store.activeDataSourceId, newOrder); }}
               onPromote={store.promoteTab}
               onLocate={(tab) => { if (tab.type === "table" && tab.table) store.locateTable(tab.connectionId, tab.database, tab.table); }}
               onNewQuery={handleNewQuery}
