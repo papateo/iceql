@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Database, ScrollText, Settings, Plus } from "lucide-react";
+import { Database, ScrollText, Settings, Plus, Unplug, Trash2 } from "lucide-react";
 import ConnectionsPanel from "./components/ConnectionsPanel";
+import ContextMenu from "./components/ContextMenu";
 import ConnectionManager from "./components/ConnectionManager";
 import TabBar from "./components/TabBar";
 import TableDataView from "./components/TableDataView";
@@ -50,6 +51,7 @@ export default function App() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [showConnManager, setShowConnManager] = useState(false);
+  const [railCtx, setRailCtx] = useState<{ x: number; y: number; configId: string } | null>(null);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
   const [tableSettings, setTableSettings] = useState<
     Record<string, { pageSize: number; infiniteScroll: boolean }>
@@ -180,6 +182,7 @@ export default function App() {
               <button
                 key={c.id}
                 onClick={() => store.selectDataSource(c.id)}
+                onContextMenu={(e) => { e.preventDefault(); setRailCtx({ x: e.clientX, y: e.clientY, configId: c.id }); }}
                 title={c.name}
                 className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
               >
@@ -205,6 +208,27 @@ export default function App() {
           <Settings size={18} />
         </button>
       </div>
+
+      {railCtx && (
+        <ContextMenu
+          x={railCtx.x}
+          y={railCtx.y}
+          onClose={() => setRailCtx(null)}
+          items={[
+            ...(store.activeConnections.has(railCtx.configId) ? [{
+              label: "Disconnect",
+              icon: <Unplug size={12} />,
+              onClick: () => store.disconnectFromDb(railCtx.configId),
+            }] : []),
+            {
+              label: "Delete Connection",
+              icon: <Trash2 size={12} />,
+              danger: true as const,
+              onClick: () => store.deleteConnection(railCtx.configId),
+            },
+          ]}
+        />
+      )}
 
       {/* Sidebar */}
       <div
@@ -232,6 +256,8 @@ export default function App() {
             if (!ac) return;
             setEditTableTarget({ connectionId: ac.connectionId, dbType, database: dbName, tableName });
           }}
+          onDisconnect={store.disconnectFromDb}
+          onDeleteConnection={store.deleteConnection}
         />
       </div>
 

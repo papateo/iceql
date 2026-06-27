@@ -15,6 +15,7 @@ import {
   PenLine,
   Pin,
   PinOff,
+  Unplug,
 } from "lucide-react";
 
 const PINNED_KEY = "iceql-pinned-tables";
@@ -47,6 +48,8 @@ interface Props {
   onOpenQuery: (configId: string, dbName: string, initialQuery?: string) => void;
   onEditTable: (configId: string, dbName: string, tableName: string, dbType: string) => void;
   locateTarget: { configId: string; dbName: string; tableName: string; nonce: number } | null;
+  onDisconnect?: (configId: string) => void;
+  onDeleteConnection?: (configId: string) => void;
 }
 
 interface CtxState {
@@ -74,6 +77,8 @@ export default function ConnectionsPanel({
   onOpenQuery,
   onEditTable,
   locateTarget,
+  onDisconnect,
+  onDeleteConnection,
 }: Props) {
   // The table currently being revealed via "Show in structure" (briefly highlighted).
   const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null);
@@ -120,6 +125,20 @@ export default function ConnectionsPanel({
   const ac = activeDataSourceId ? activeConnections.get(activeDataSourceId) : undefined;
   const dsPinned = pinnedTables.filter((p) => p.configId === activeDataSourceId);
 
+  const connMenuItems: ContextMenuEntry[] = activeConn ? [
+    ...(ac ? [{
+      label: "Disconnect",
+      icon: <Unplug size={12} />,
+      onClick: () => onDisconnect?.(activeConn.id),
+    }] : []),
+    {
+      label: "Delete Connection",
+      icon: <Trash2 size={12} />,
+      danger: true,
+      onClick: () => onDeleteConnection?.(activeConn.id),
+    },
+  ] : [];
+
   if (!activeConn) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-muted text-xs gap-3 px-6 text-center">
@@ -132,7 +151,10 @@ export default function ConnectionsPanel({
   return (
     <div className="flex flex-col h-full">
       {/* Active data source header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0">
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0 cursor-context-menu"
+        onContextMenu={(e) => connMenuItems.length > 0 && openCtx(e, connMenuItems)}
+      >
         <Database size={15} className={dbTypeIcon(activeConn.db_type)} />
         <span className="text-sm font-semibold text-text-primary truncate flex-1">{activeConn.name}</span>
         {ac && <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="Connected" />}
