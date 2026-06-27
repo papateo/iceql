@@ -400,6 +400,8 @@ impl ConnectionPool {
         table: &str,
         page: i64,
         page_size: i64,
+        sort_col: Option<&str>,
+        sort_dir: Option<&str>,
     ) -> Result<QueryResult, String> {
         let offset = page * page_size;
         let count_query;
@@ -423,8 +425,9 @@ impl ConnectionPool {
                     &target_pool
                 };
                 count_query = format!("SELECT COUNT(*) FROM public.\"{table}\"");
+                let order = build_order_clause(sort_col, sort_dir, '"');
                 data_query = format!(
-                    "SELECT * FROM public.\"{table}\" LIMIT {page_size} OFFSET {offset}"
+                    "SELECT * FROM public.\"{table}\"{order} LIMIT {page_size} OFFSET {offset}"
                 );
                 let start = Instant::now();
                 let count_row = sqlx::query(&count_query)
@@ -439,8 +442,9 @@ impl ConnectionPool {
             }
             ConnectionPool::MySQL(pool, _) => {
                 count_query = format!("SELECT COUNT(*) FROM `{database}`.`{table}`");
+                let order = build_order_clause(sort_col, sort_dir, '`');
                 data_query = format!(
-                    "SELECT * FROM `{database}`.`{table}` LIMIT {page_size} OFFSET {offset}"
+                    "SELECT * FROM `{database}`.`{table}`{order} LIMIT {page_size} OFFSET {offset}"
                 );
                 let start = Instant::now();
                 let count_row = sqlx::query(&count_query)
@@ -455,8 +459,9 @@ impl ConnectionPool {
             }
             ConnectionPool::SQLite(pool, _) => {
                 count_query = format!("SELECT COUNT(*) FROM \"{table}\"");
+                let order = build_order_clause(sort_col, sort_dir, '"');
                 data_query = format!(
-                    "SELECT * FROM \"{table}\" LIMIT {page_size} OFFSET {offset}"
+                    "SELECT * FROM \"{table}\"{order} LIMIT {page_size} OFFSET {offset}"
                 );
                 let start = Instant::now();
                 let count_row = sqlx::query(&count_query)
@@ -470,6 +475,24 @@ impl ConnectionPool {
                 Ok(result)
             }
         }
+    }
+}
+
+/// Build an `ORDER BY` clause for a paged table query. The column is the user-clicked
+/// header (always one of the table's real columns); it is wrapped in the dialect's
+/// identifier quote (`q`) with that quote escaped, and the direction is restricted to
+/// ASC/DESC. Returns an empty string when no column is selected.
+fn build_order_clause(sort_col: Option<&str>, sort_dir: Option<&str>, q: char) -> String {
+    match sort_col {
+        Some(col) if !col.is_empty() => {
+            let dir = match sort_dir {
+                Some(d) if d.eq_ignore_ascii_case("desc") => "DESC",
+                _ => "ASC",
+            };
+            let escaped = col.replace(q, &format!("{q}{q}"));
+            format!(" ORDER BY {q}{escaped}{q} {dir}")
+        }
+        _ => String::new(),
     }
 }
 

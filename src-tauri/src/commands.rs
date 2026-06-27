@@ -182,13 +182,16 @@ pub async fn get_table_data(
     table: String,
     page: i64,
     page_size: i64,
+    sort_col: Option<String>,
+    sort_dir: Option<String>,
     state: tauri::State<'_, ConnectionStore>,
 ) -> Result<QueryResult, String> {
     let store = state.lock().await;
     let pool = store
         .get(&connection_id)
         .ok_or_else(|| "Connection not found".to_string())?;
-    pool.get_table_data(&database, &table, page, page_size).await
+    pool.get_table_data(&database, &table, page, page_size, sort_col.as_deref(), sort_dir.as_deref())
+        .await
 }
 
 #[tauri::command]

@@ -176,11 +176,11 @@ export default function TableDataView({
     setError(null);
     setEdits(new Map());
     setEditingCell(null);
-    setSortCol(null);
-    setFilters({});
+    setSelectedRows(new Set());
     setRows([]);
     setLoadedPages(0);
-    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)} LIMIT ${pageSize} OFFSET 0`;
+    const orderSql = sortCol ? ` ORDER BY ${sortCol} ${sortDir.toUpperCase()}` : "";
+    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)}${orderSql} LIMIT ${pageSize} OFFSET 0`;
     try {
       const res = await invoke<QueryResult>("get_table_data", {
         connectionId: ac.connectionId,
@@ -188,6 +188,8 @@ export default function TableDataView({
         table,
         page: 0,
         pageSize,
+        sortCol,
+        sortDir,
       });
       setColumns(res.columns);
       setTotalCount(res.row_count);
@@ -205,13 +207,14 @@ export default function TableDataView({
     } finally {
       setLoading(false);
     }
-  }, [ac, database, table, pageSize]);
+  }, [ac, database, table, pageSize, sortCol, sortDir]);
 
   // Load next page (append)
   const fetchMore = useCallback(async () => {
     if (!ac || loadingMore || !hasMore) return;
     setLoadingMore(true);
-    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)} LIMIT ${pageSize} OFFSET ${loadedPages * pageSize}`;
+    const orderSql = sortCol ? ` ORDER BY ${sortCol} ${sortDir.toUpperCase()}` : "";
+    const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)}${orderSql} LIMIT ${pageSize} OFFSET ${loadedPages * pageSize}`;
     try {
       const res = await invoke<QueryResult>("get_table_data", {
         connectionId: ac.connectionId,
@@ -219,6 +222,8 @@ export default function TableDataView({
         table,
         page: loadedPages,
         pageSize,
+        sortCol,
+        sortDir,
       });
       setRows((prev) => [
         ...prev,
@@ -235,7 +240,7 @@ export default function TableDataView({
     } finally {
       setLoadingMore(false);
     }
-  }, [ac, database, table, pageSize, loadedPages, loadingMore, hasMore]);
+  }, [ac, database, table, pageSize, loadedPages, loadingMore, hasMore, sortCol, sortDir]);
 
   useEffect(() => { fetchInitial(); }, [fetchInitial]);
 
@@ -342,17 +347,10 @@ export default function TableDataView({
         return String(v).toLowerCase().includes(lower);
       });
     });
-    if (sortCol) {
-      r = [...r].sort((a, b) => {
-        const av = a[sortCol], bv = b[sortCol];
-        if (av === null || av === undefined) return 1;
-        if (bv === null || bv === undefined) return -1;
-        const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-    }
+    // Sorting is applied server-side (ORDER BY across the whole table), so rows arrive
+    // already ordered — only client-side filtering of the loaded rows happens here.
     return r;
-  }, [rows, filters, sortCol, sortDir]);
+  }, [rows, filters]);
 
   const virtualizer = useVirtualizer({
     count: displayedRows.length,
@@ -614,7 +612,7 @@ export default function TableDataView({
               setLoading(true);
               setError(null);
               try {
-                const res = await invoke<QueryResult>("get_table_data", { connectionId: ac.connectionId, database, table, page: prevPage, pageSize });
+                const res = await invoke<QueryResult>("get_table_data", { connectionId: ac.connectionId, database, table, page: prevPage, pageSize, sortCol, sortDir });
                 setColumns(res.columns);
                 setTotalCount(res.row_count);
                 setExecMs(res.execution_time_ms);
@@ -638,7 +636,7 @@ export default function TableDataView({
               setLoading(true);
               setError(null);
               try {
-                const res = await invoke<QueryResult>("get_table_data", { connectionId: ac.connectionId, database, table, page: nextPage, pageSize });
+                const res = await invoke<QueryResult>("get_table_data", { connectionId: ac.connectionId, database, table, page: nextPage, pageSize, sortCol, sortDir });
                 setColumns(res.columns);
                 setTotalCount(res.row_count);
                 setExecMs(res.execution_time_ms);
