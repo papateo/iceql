@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Database, ScrollText, Settings, Plus } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import ConnectionManager from "./components/ConnectionManager";
 import TabBar from "./components/TabBar";
@@ -182,9 +181,8 @@ export default function App() {
                 key={c.id}
                 onClick={() => store.selectDataSource(c.id)}
                 title={c.name}
-                className={`relative w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
               >
-                {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-highlight" />}
                 <Database size={18} className={dsColor(c.db_type)} />
               </button>
             );
@@ -196,6 +194,15 @@ export default function App() {
           className="w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:text-highlight hover:bg-accent/50 transition-colors"
         >
           <Plus size={18} />
+        </button>
+
+        {/* Settings pinned to the bottom of the rail */}
+        <button
+          onClick={() => setShowSettings(true)}
+          title="Settings"
+          className="mt-auto w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:text-highlight hover:bg-accent/50 transition-colors"
+        >
+          <Settings size={18} />
         </button>
       </div>
 

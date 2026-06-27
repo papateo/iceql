@@ -143,10 +143,10 @@ export default function ConnectionsPanel({
         <div className="flex-shrink-0 border-b border-border">
           <button
             onClick={() => setPinnedOpen((v) => !v)}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-text-muted hover:text-text-secondary transition-colors"
+            className="w-full flex items-center gap-1 pl-5 pr-3 py-1 text-[11px] font-semibold text-text-muted hover:text-text-secondary transition-colors"
           >
-            {pinnedOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            <Pin size={11} className="text-highlight" />
+            {pinnedOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <Pin size={13} className="text-highlight" />
             <span className="flex-1 text-left">Pinned</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-text-muted">{dsPinned.length}</span>
           </button>
