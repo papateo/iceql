@@ -21,7 +21,8 @@ import {
   Eye,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
+import * as XLSX from "xlsx";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
 
@@ -132,7 +133,7 @@ export default function TableDataView({
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
-  const exportData = async (format: "csv" | "json" | "sql", forceAll = false) => {
+  const exportData = async (format: "csv" | "json" | "sql" | "xlsx", forceAll = false) => {
     const exportRows = !forceAll && selectedRows.size > 0
       ? rows.filter((_, i) => selectedRows.has(i))
       : rows;
@@ -158,6 +159,20 @@ export default function TableDataView({
       content = JSON.stringify(exportRows, null, 2);
     }
     const date = new Date().toISOString().slice(0, 10);
+
+    if (format === "xlsx") {
+      const ws = XLSX.utils.json_to_sheet(exportRows, { header: columns });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, table.slice(0, 31));
+      const buf: ArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const path = await save({
+        defaultPath: `${table}_${date}.xlsx`,
+        filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+      });
+      if (path) await writeFile(path, new Uint8Array(buf));
+      return;
+    }
+
     const ext = format === "sql" ? "sql" : format;
     const path = await save({
       defaultPath: `${table}_${date}.${ext}`,
@@ -591,6 +606,8 @@ export default function TableDataView({
             <button onClick={() => exportData("json")} className="px-1 py-0.5 hover:text-text-primary transition-colors">JSON</button>
             <span>·</span>
             <button onClick={() => exportData("sql")} className="px-1 py-0.5 hover:text-text-primary transition-colors">SQL</button>
+            <span>·</span>
+            <button onClick={() => exportData("xlsx")} className="px-1 py-0.5 hover:text-text-primary transition-colors">Excel</button>
           </div>
         )}
 
@@ -946,7 +963,7 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
   onCopyRows: () => void;
   onCopyRowsCSV: () => void;
   onCopyRowsInsertSQL: () => void;
-  onExport: (format: "csv" | "json" | "sql", scope: "selected" | "all") => void;
+  onExport: (format: "csv" | "json" | "sql" | "xlsx", scope: "selected" | "all") => void;
   onSelectAll: () => void; onDeselectAll: () => void; onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -985,12 +1002,14 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
         {btn("Export selected as CSV", <Download size={12} />, () => onExport("csv", "selected"))}
         {btn("Export selected as JSON", <Download size={12} />, () => onExport("json", "selected"))}
         {btn("Export selected as SQL Insert", <Download size={12} />, () => onExport("sql", "selected"))}
+        {btn("Export selected as Excel", <Download size={12} />, () => onExport("xlsx", "selected"))}
         <div className="my-1 border-t border-border" />
       </>}
       <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">All {totalCount} rows (this page)</div>
       {btn("Export all as CSV", <Download size={12} />, () => onExport("csv", "all"))}
       {btn("Export all as JSON", <Download size={12} />, () => onExport("json", "all"))}
       {btn("Export all as SQL Insert", <Download size={12} />, () => onExport("sql", "all"))}
+      {btn("Export all as Excel", <Download size={12} />, () => onExport("xlsx", "all"))}
       <div className="my-1 border-t border-border" />
       {selectedCount < totalCount
         ? btn("Select all rows", <Check size={12} />, onSelectAll)
