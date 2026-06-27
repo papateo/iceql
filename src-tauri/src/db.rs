@@ -7,6 +7,98 @@ pub enum ConnectionPool {
     Postgres(sqlx::PgPool, ConnectionConfig),
     MySQL(sqlx::MySqlPool, ConnectionConfig),
     SQLite(sqlx::SqlitePool, ConnectionConfig),
+    CSV(sqlx::SqlitePool, ConnectionConfig),
+}
+
+/// Derive the in-memory SQLite table name from the CSV file's stem.
+fn csv_table_name(config: &ConnectionConfig) -> String {
+    let stem = config
+        .filename
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).file_stem())
+        .and_then(|s| s.to_str())
+        .unwrap_or("data");
+    let name: String = stem
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    if name.is_empty() { "data".to_string() } else { name }
+}
+
+/// Parse a CSV file and load it into a new in-memory SQLite pool.
+async fn load_csv_into_sqlite(path: &str, config: &ConnectionConfig) -> Result<ConnectionPool, String> {
+    let path_owned = path.to_string();
+
+    let (table_name, headers, records) = tokio::task::spawn_blocking(move || {
+        let stem = std::path::Path::new(&path_owned)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("data")
+            .to_string();
+        let tname: String = stem
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .collect();
+        let tname = if tname.is_empty() { "data".to_string() } else { tname };
+
+        let mut rdr = csv::Reader::from_path(&path_owned)
+            .map_err(|e| format!("Cannot open CSV file: {e}"))?;
+
+        let headers: Vec<String> = rdr
+            .headers()
+            .map_err(|e| format!("CSV header error: {e}"))?
+            .iter()
+            .map(|h| h.to_string())
+            .collect();
+
+        if headers.is_empty() {
+            return Err("CSV file has no columns".to_string());
+        }
+
+        let mut records: Vec<Vec<String>> = Vec::new();
+        for result in rdr.records() {
+            let record = result.map_err(|e| format!("CSV row error: {e}"))?;
+            records.push(record.iter().map(|f| f.to_string()).collect());
+        }
+
+        Ok::<(String, Vec<String>, Vec<Vec<String>>), String>((tname, headers, records))
+    })
+    .await
+    .map_err(|e| format!("Thread join error: {e}"))??;
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .map_err(|e| format!("Failed to create in-memory SQLite: {e}"))?;
+
+    let col_defs: String = headers
+        .iter()
+        .map(|h| format!("\"{}\" TEXT", h.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let create_sql = format!("CREATE TABLE \"{table_name}\" ({col_defs})");
+    sqlx::query(&create_sql)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to create table: {e}"))?;
+
+    if !records.is_empty() {
+        let placeholders: String = headers.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let insert_sql = format!("INSERT INTO \"{table_name}\" VALUES ({placeholders})");
+        for record in &records {
+            let mut query = sqlx::query(&insert_sql);
+            for field in record {
+                query = query.bind(field.as_str());
+            }
+            query
+                .execute(&pool)
+                .await
+                .map_err(|e| format!("Failed to insert CSV row: {e}"))?;
+        }
+    }
+
+    Ok(ConnectionPool::CSV(pool, config.clone()))
 }
 
 impl ConnectionPool {
@@ -41,15 +133,19 @@ impl ConnectionPool {
                 Ok(ConnectionPool::MySQL(pool, config.clone()))
             }
             "sqlite" => {
-                let path = config
-                    .filename
-                    .as_deref()
-                    .unwrap_or(&config.database);
+                let path = config.filename.as_deref().unwrap_or(&config.database);
                 let url = format!("sqlite:{path}");
                 let pool = sqlx::SqlitePool::connect(&url)
                     .await
                     .map_err(|e| format!("SQLite connection failed: {e}"))?;
                 Ok(ConnectionPool::SQLite(pool, config.clone()))
+            }
+            "csv" => {
+                let path = config
+                    .filename
+                    .as_deref()
+                    .ok_or_else(|| "CSV file path is required".to_string())?;
+                load_csv_into_sqlite(path, config).await
             }
             other => Err(format!("Unsupported database type: {other}")),
         }
@@ -100,6 +196,7 @@ impl ConnectionPool {
                     .map_err(|e| format!("SQLite connection failed: {e}"))?;
                 Ok(ConnectionPool::SQLite(pool, config.clone()))
             }
+            "csv" => Err("CSV data sources do not support transactions".to_string()),
             other => Err(format!("Unsupported database type: {other}")),
         }
     }
@@ -122,7 +219,7 @@ impl ConnectionPool {
                     execute_mysql(pool, query, start).await
                 }
             }
-            ConnectionPool::SQLite(pool, _) => {
+            ConnectionPool::SQLite(pool, _) | ConnectionPool::CSV(pool, _) => {
                 if is_dml(query) {
                     execute_dml_sqlite(pool, query, start).await
                 } else {
@@ -160,17 +257,14 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::SQLite(_, _) => {
-                // SQLite doesn't have multiple databases; return "main"
-                Ok(vec!["main".to_string()])
-            }
+            ConnectionPool::SQLite(_, _) => Ok(vec!["main".to_string()]),
+            ConnectionPool::CSV(_, _) => Ok(vec!["csv".to_string()]),
         }
     }
 
     pub async fn get_tables(&self, database: &str) -> Result<Vec<TableInfo>, String> {
         match self {
             ConnectionPool::Postgres(pool, config) => {
-                // PostgreSQL can't switch databases in-session; create a new connection to the target db
                 let target_pool;
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
@@ -241,6 +335,10 @@ impl ConnectionPool {
                         }
                     })
                     .collect())
+            }
+            ConnectionPool::CSV(_, config) => {
+                let tname = csv_table_name(config);
+                Ok(vec![TableInfo { name: tname, table_type: "TABLE".to_string() }])
             }
         }
     }
@@ -315,8 +413,8 @@ impl ConnectionPool {
                     })
                     .collect())
             }
-            ConnectionPool::SQLite(pool, _) => {
-                let query = format!("PRAGMA table_info({table})");
+            ConnectionPool::SQLite(pool, _) | ConnectionPool::CSV(pool, _) => {
+                let query = format!("PRAGMA table_info(\"{table}\")");
                 let rows = sqlx::query(&query)
                     .fetch_all(pool)
                     .await
@@ -334,6 +432,70 @@ impl ConnectionPool {
                     })
                     .collect())
             }
+        }
+    }
+
+    pub async fn get_primary_keys(
+        &self,
+        database: &str,
+        table: &str,
+    ) -> Result<Vec<String>, String> {
+        match self {
+            ConnectionPool::Postgres(pool, config) => {
+                let target_pool;
+                let pool_ref: &sqlx::PgPool = if database == config.database {
+                    pool
+                } else {
+                    let url = format!(
+                        "postgres://{}:{}@{}:{}/{}",
+                        urlencoding_simple(&config.username),
+                        urlencoding_simple(&config.password),
+                        config.host,
+                        config.port,
+                        database
+                    );
+                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    &target_pool
+                };
+                let rows = sqlx::query(
+                    "SELECT a.attname \
+                     FROM pg_index i \
+                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+                     WHERE i.indrelid = $1::regclass AND i.indisprimary \
+                     ORDER BY array_position(i.indkey, a.attnum)",
+                )
+                .bind(table)
+                .fetch_all(pool_ref)
+                .await
+                .map_err(|e| e.to_string())?;
+                use sqlx::Row;
+                Ok(rows.iter().map(|r| r.get::<String, _>("attname")).collect())
+            }
+            ConnectionPool::MySQL(pool, _) => {
+                let rows = sqlx::query(
+                    "SELECT COLUMN_NAME \
+                     FROM information_schema.COLUMNS \
+                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_KEY = 'PRI' \
+                     ORDER BY ORDINAL_POSITION",
+                )
+                .bind(database)
+                .bind(table)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                use sqlx::Row;
+                Ok(rows.iter().map(|r| r.get::<String, _>("COLUMN_NAME")).collect())
+            }
+            ConnectionPool::SQLite(pool, _) => {
+                let query = format!("SELECT name FROM pragma_table_info('{table}') WHERE pk > 0 ORDER BY pk");
+                let rows = sqlx::query(&query)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                use sqlx::Row;
+                Ok(rows.iter().map(|r| r.get::<String, _>("name")).collect())
+            }
+            ConnectionPool::CSV(_, _) => Ok(vec![]),
         }
     }
 
@@ -384,7 +546,7 @@ impl ConnectionPool {
                     execute_mysql(pool_ref, query, start).await
                 }
             }
-            ConnectionPool::SQLite(pool, _) => {
+            ConnectionPool::SQLite(pool, _) | ConnectionPool::CSV(pool, _) => {
                 if is_dml(query) {
                     execute_dml_sqlite(pool, query, start).await
                 } else {
@@ -474,14 +636,29 @@ impl ConnectionPool {
                 result.row_count = total as u64;
                 Ok(result)
             }
+            ConnectionPool::CSV(pool, config) => {
+                let tname = csv_table_name(config);
+                count_query = format!("SELECT COUNT(*) FROM \"{tname}\"");
+                let order = build_order_clause(sort_col, sort_dir, '"');
+                data_query = format!(
+                    "SELECT * FROM \"{tname}\"{order} LIMIT {page_size} OFFSET {offset}"
+                );
+                let start = Instant::now();
+                let count_row = sqlx::query(&count_query)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                use sqlx::Row;
+                let total: i64 = count_row.get(0);
+                let mut result = execute_sqlite(pool, &data_query, start).await?;
+                result.row_count = total as u64;
+                Ok(result)
+            }
         }
     }
 }
 
-/// Build an `ORDER BY` clause for a paged table query. The column is the user-clicked
-/// header (always one of the table's real columns); it is wrapped in the dialect's
-/// identifier quote (`q`) with that quote escaped, and the direction is restricted to
-/// ASC/DESC. Returns an empty string when no column is selected.
+/// Build an `ORDER BY` clause for a paged table query.
 fn build_order_clause(sort_col: Option<&str>, sort_dir: Option<&str>, q: char) -> String {
     match sort_col {
         Some(col) if !col.is_empty() => {
@@ -594,7 +771,6 @@ async fn execute_dml_sqlite(pool: &sqlx::SqlitePool, query: &str, start: Instant
 }
 
 fn urlencoding_simple(s: &str) -> String {
-    // Basic percent-encoding for connection strings
     s.chars()
         .flat_map(|c| match c {
             '@' => vec!['%', '4', '0'],
@@ -621,7 +797,6 @@ async fn execute_pg(
     let elapsed = start.elapsed().as_millis() as u64;
 
     if rows.is_empty() {
-        // Could be a DDL/DML that returns no rows — just return affected rows
         return Ok(QueryResult {
             columns: vec![],
             rows: vec![],

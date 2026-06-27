@@ -14,11 +14,16 @@ import {
   Download,
   Trash2,
   Columns3,
+  Copy,
+  Clipboard,
+  Eraser,
+  Scissors,
+  Eye,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
-import { tableRef, buildUpdateStatements, buildDeleteStatements } from "../utils/sql";
+import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
 
 interface Props {
   configId: string;
@@ -35,7 +40,7 @@ interface Props {
 interface EditCell {
   rowIdx: number;
   col: string;
-  value: string;
+  value: string | null;
 }
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 500] as const;
@@ -75,8 +80,13 @@ export default function TableDataView({
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
+  const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [cellSel, setCellSel] = useState<{ r1: number; c1: number; r2: number; c2: number } | null>(null);
+  const isCellDragging = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [editCtxMenu, setEditCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const lastClickedRow = useRef<number | null>(null);
@@ -108,6 +118,12 @@ export default function TableDataView({
   const handleRowMouseEnter = useCallback((rowIdx: number) => {
     if (!isDragging.current) return;
     setSelectedRows((prev) => { const n = new Set(prev); dragMode.current === "select" ? n.add(rowIdx) : n.delete(rowIdx); return n; });
+  }, []);
+
+  useEffect(() => {
+    const onUp = () => { isCellDragging.current = false; };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
   useEffect(() => {
@@ -179,6 +195,10 @@ export default function TableDataView({
     setSelectedRows(new Set());
     setRows([]);
     setLoadedPages(0);
+    // Fetch primary keys once per table load (fire-and-forget; doesn't block data load)
+    invoke<string[]>("get_primary_keys", { connectionId: ac.connectionId, database, table })
+      .then((pks) => setPrimaryKeys(pks))
+      .catch(() => setPrimaryKeys([]));
     const orderSql = sortCol ? ` ORDER BY ${sortCol} ${sortDir.toUpperCase()}` : "";
     const sql = `SELECT * FROM ${tableRef(ac.config.db_type, database, table)}${orderSql} LIMIT ${pageSize} OFFSET 0`;
     try {
@@ -251,11 +271,11 @@ export default function TableDataView({
   const startEdit = (rowIdx: number, col: string) => {
     if (selectedRows.size > 0) setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
-    const current = edits.has(editKey)
-      ? String(edits.get(editKey) ?? "")
+    const current: string | null = edits.has(editKey)
+      ? (edits.get(editKey) === null ? null : String(edits.get(editKey) ?? ""))
       : (() => {
           const v = rows[rowIdx]?.[col];
-          return v === null || v === undefined ? "" : String(v);
+          return v === null || v === undefined ? null : String(v);
         })();
     setEditingCell({ rowIdx, col, value: current });
   };
@@ -265,8 +285,9 @@ export default function TableDataView({
     const { rowIdx, col, value } = editingCell;
     const editKey = `${rowIdx}:${col}`;
     const original = rows[rowIdx]?.[col];
-    const originalStr = original === null || original === undefined ? "" : String(original);
-    if (value === originalStr) {
+    const isOriginalNull = original === null || original === undefined;
+    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === String(original));
+    if (noChange) {
       setEdits((prev) => { const n = new Map(prev); n.delete(editKey); return n; });
     } else {
       setEdits((prev) => new Map(prev).set(editKey, value));
@@ -274,10 +295,10 @@ export default function TableDataView({
     setEditingCell(null);
   };
 
-  const revertAll = () => { setEdits(new Map()); setEditingCell(null); };
+  const revertAll = () => { setEdits(new Map()); setEditingCell(null); setError(null); };
 
   const buildUpdateSQL = (): string[] =>
-    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits);
+    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
 
   const commitAll = async () => {
     if (!ac || !hasEdits) return;
@@ -326,6 +347,104 @@ export default function TableDataView({
   };
 
   const isEdited = (rowIdx: number, col: string) => edits.has(`${rowIdx}:${col}`);
+
+  const normCellSel = () => {
+    if (!cellSel) return null;
+    return { r1: Math.min(cellSel.r1, cellSel.r2), r2: Math.max(cellSel.r1, cellSel.r2), c1: Math.min(cellSel.c1, cellSel.c2), c2: Math.max(cellSel.c1, cellSel.c2) };
+  };
+  const isCellInSel = (displayIdx: number, colIdx: number) => {
+    const s = normCellSel();
+    return s ? displayIdx >= s.r1 && displayIdx <= s.r2 && colIdx >= s.c1 && colIdx <= s.c2 : false;
+  };
+
+  const selectedRowsSorted = () =>
+    [...selectedRows].sort((a, b) => a - b);
+
+  const copyRowsAsText = () => {
+    const idxs = selectedRowsSorted();
+    const lines = idxs.map((ri) =>
+      visibleColumns.map((col) => {
+        const v = getCellValue(ri, col);
+        return v === null || v === undefined ? "" : String(v);
+      }).join("\t")
+    );
+    navigator.clipboard.writeText(lines.join("\n"));
+  };
+
+  const copyRowsAsCSV = () => {
+    const esc = (v: string) => v.includes(",") || v.includes('"') || v.includes("\n") ? `"${v.replace(/"/g, '""')}"` : v;
+    const idxs = selectedRowsSorted();
+    const header = visibleColumns.map(esc).join(",");
+    const lines = idxs.map((ri) =>
+      visibleColumns.map((col) => {
+        const v = getCellValue(ri, col);
+        return v === null || v === undefined ? "" : esc(String(v));
+      }).join(",")
+    );
+    navigator.clipboard.writeText([header, ...lines].join("\n"));
+  };
+
+  const copyRowsAsInsertSQL = () => {
+    const dbType = ac?.config.db_type ?? "mysql";
+    const qi = (n: string) => quoteIdent(dbType, n);
+    const colList = visibleColumns.map(qi).join(", ");
+    const idxs = selectedRowsSorted();
+    const lines = idxs.map((ri) => {
+      const vals = visibleColumns.map((col) => sqlLiteral(getCellValue(ri, col)));
+      return `INSERT INTO ${tableRef(dbType, database, table)} (${colList}) VALUES (${vals.join(", ")});`;
+    });
+    navigator.clipboard.writeText(lines.join("\n"));
+  };
+
+  const copySelAsText = () => {
+    const s = normCellSel();
+    if (!s) return;
+    const cols = visibleColumns.slice(s.c1, s.c2 + 1);
+    const lines: string[] = [];
+    for (let di = s.r1; di <= s.r2; di++) {
+      const row = displayedRows[di];
+      if (!row) continue;
+      lines.push(cols.map((col) => {
+        const v = getCellValue(row.__idx, col);
+        return v === null || v === undefined ? "" : String(v);
+      }).join("\t"));
+    }
+    navigator.clipboard.writeText(lines.join("\n"));
+  };
+
+  const copySelAsCSV = () => {
+    const s = normCellSel();
+    if (!s) return;
+    const cols = visibleColumns.slice(s.c1, s.c2 + 1);
+    const esc = (v: string) => v.includes(",") || v.includes('"') || v.includes("\n") ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines: string[] = [cols.map(esc).join(",")];
+    for (let di = s.r1; di <= s.r2; di++) {
+      const row = displayedRows[di];
+      if (!row) continue;
+      const vals = cols.map((col) => {
+        const v = getCellValue(row.__idx, col);
+        return v === null || v === undefined ? "" : esc(String(v));
+      });
+      lines.push(vals.join(","));
+    }
+    navigator.clipboard.writeText(lines.join("\n"));
+  };
+
+  const copySelAsInsertSQL = () => {
+    const s = normCellSel();
+    if (!s) return;
+    const cols = visibleColumns.slice(s.c1, s.c2 + 1);
+    const dbType = ac?.config.db_type ?? "mysql";
+    const qi = (n: string) => quoteIdent(dbType, n);
+    const lines: string[] = [];
+    for (let di = s.r1; di <= s.r2; di++) {
+      const row = displayedRows[di];
+      if (!row) continue;
+      const vals = cols.map((col) => sqlLiteral(getCellValue(row.__idx, col)));
+      lines.push(`INSERT INTO ${tableRef(dbType, database, table)} (${cols.map(qi).join(", ")}) VALUES (${vals.join(", ")});`);
+    }
+    navigator.clipboard.writeText(lines.join("\n"));
+  };
 
   const handleSortClick = (col: string) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -463,6 +582,9 @@ export default function TableDataView({
             <button onClick={revertAll} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors">
               <RotateCcw size={12} /> Revert
             </button>
+            <button onClick={() => setShowSqlPreview(true)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors" title="Preview SQL">
+              <Eye size={12} />
+            </button>
             <button onClick={commitAll} disabled={loading} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-highlight text-bg hover:bg-highlight/90 transition-colors disabled:opacity-50">
               {loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Commit
             </button>
@@ -531,31 +653,49 @@ export default function TableDataView({
                 <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={visibleColumns.length + 1} className="p-0 border-0" /></tr>
               )}
               {virtualizer.getVirtualItems().map((vRow) => {
-                const displayRow = displayedRows[vRow.index];
+                const displayIdx = vRow.index;
+                const displayRow = displayedRows[displayIdx];
                 const rowIdx = displayRow.__idx;
                 const isSelected = selectedRows.has(rowIdx);
                 return (
                   <tr
                     key={rowIdx}
-                    className={`border-b border-border/50 transition-colors ${isSelected ? "bg-highlight/10" : "hover:bg-accent/30"}`}
-                    onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); if (!selectedRows.has(rowIdx)) { lastClickedRow.current = rowIdx; setSelectedRows(new Set([rowIdx])); } }}
+                    className={`border-b border-border/50 transition-colors ${isSelected && !cellSel ? "bg-highlight/10" : "hover:bg-accent/30"}`}
+                    onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
                   >
                     <td
                       className={`px-2 py-1.5 w-10 border-r border-border/50 text-right select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
-                      onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
+                      onMouseDown={(e) => { setCellSel(null); handleRowMouseDown(e, rowIdx); }}
                       onMouseEnter={() => handleRowMouseEnter(rowIdx)}
                     >
                       {rowIdx + 1}
                     </td>
-                    {visibleColumns.map((col) => {
+                    {visibleColumns.map((col, colIdx) => {
                       const isActive = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
                       const edited = isEdited(rowIdx, col);
+                      const inSel = isCellInSel(displayIdx, colIdx);
                       return (
-                        <td key={col} className={`relative border-r border-border/50 last:border-r-0 max-w-[400px] ${isActive ? "select-text" : "select-none"} ${edited ? "bg-highlight/10" : ""}`} onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }} onDoubleClick={() => startEdit(rowIdx, col)}>
+                        <td
+                          key={col}
+                          className={`relative border-r border-border/50 last:border-r-0 max-w-[400px] ${isActive ? "select-text" : "select-none"} ${inSel ? "bg-blue-500/20" : edited ? "bg-highlight/10" : ""}`}
+                          onMouseDown={(e) => {
+                            if (e.button !== 0) return;
+                            if (selectedRows.size > 0) setSelectedRows(new Set());
+                            setCellSel({ r1: displayIdx, c1: colIdx, r2: displayIdx, c2: colIdx });
+                            isCellDragging.current = true;
+                          }}
+                          onMouseEnter={() => {
+                            if (!isCellDragging.current) return;
+                            setCellSel((prev) => prev ? { ...prev, r2: displayIdx, c2: colIdx } : null);
+                          }}
+                          onDoubleClick={() => { setCellSel(null); startEdit(rowIdx, col); }}
+                        >
                           {isActive ? (
-                            <input ref={inputRef} className="w-full h-full px-3 py-1.5 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value}
+                            <input ref={inputRef} className="w-full h-full px-3 py-1.5 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value ?? ""}
+                              placeholder={editingCell.value === null ? "NULL" : undefined}
                               onChange={(e) => setEditingCell((prev) => prev ? { ...prev, value: e.target.value } : null)}
                               onMouseDown={(e) => e.stopPropagation()}
+                              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setEditCtxMenu({ x: e.clientX, y: e.clientY }); }}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") { e.preventDefault(); commitCell(); }
                                 if (e.key === "Escape") setEditingCell(null);
@@ -709,19 +849,85 @@ export default function TableDataView({
         <TableCtxMenu
           x={ctxMenu.x} y={ctxMenu.y}
           selectedCount={selectedRows.size} totalCount={rows.length}
+          hasCellSel={!!cellSel}
+          onCopy={copySelAsText}
+          onCopyCSV={copySelAsCSV}
+          onCopyInsertSQL={copySelAsInsertSQL}
+          onCopyRows={copyRowsAsText}
+          onCopyRowsCSV={copyRowsAsCSV}
+          onCopyRowsInsertSQL={copyRowsAsInsertSQL}
           onExport={(fmt, scope) => exportData(fmt, scope === "all")}
           onSelectAll={() => setSelectedRows(new Set(rows.map((_, i) => i)))}
           onDeselectAll={() => setSelectedRows(new Set())}
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {editCtxMenu && editingCell && (
+        <EditCellCtxMenu
+          x={editCtxMenu.x} y={editCtxMenu.y}
+          onClose={() => setEditCtxMenu(null)}
+          onCopy={() => navigator.clipboard.writeText(editingCell.value ?? "")}
+          onCut={() => {
+            navigator.clipboard.writeText(editingCell.value ?? "");
+            setEditingCell((prev) => prev ? { ...prev, value: "" } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          onPaste={async () => {
+            const text = await navigator.clipboard.readText();
+            setEditingCell((prev) => prev ? { ...prev, value: text } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          onSetNull={() => {
+            setEditingCell((prev) => prev ? { ...prev, value: null } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+        />
+      )}
+
+      {showSqlPreview && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowSqlPreview(false)}>
+          <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[640px] max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Eye size={14} className="text-highlight" />
+                <span className="text-sm font-semibold text-text-primary">Preview SQL</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigator.clipboard.writeText(buildUpdateSQL().join(";\n"))}
+                  className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-accent transition-colors"
+                >
+                  Copy
+                </button>
+                <button onClick={() => setShowSqlPreview(false)} className="text-text-muted hover:text-text-primary transition-colors"><X size={14} /></button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
+              {buildUpdateSQL().join(";\n\n")}
+            </pre>
+            <div className="flex justify-end gap-2 px-4 py-3 border-t border-border flex-shrink-0">
+              <button onClick={() => setShowSqlPreview(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Close</button>
+              <button onClick={() => { setShowSqlPreview(false); commitAll(); }} disabled={loading} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-highlight text-bg hover:bg-highlight/90 font-medium transition-colors disabled:opacity-50">
+                <Check size={12} /> Commit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function TableCtxMenu({ x, y, selectedCount, totalCount, onExport, onSelectAll, onDeselectAll, onClose }: {
+function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onCopyCSV, onCopyInsertSQL, onCopyRows, onCopyRowsCSV, onCopyRowsInsertSQL, onExport, onSelectAll, onDeselectAll, onClose }: {
   x: number; y: number;
   selectedCount: number; totalCount: number;
+  hasCellSel: boolean;
+  onCopy: () => void;
+  onCopyCSV: () => void;
+  onCopyInsertSQL: () => void;
+  onCopyRows: () => void;
+  onCopyRowsCSV: () => void;
+  onCopyRowsInsertSQL: () => void;
   onExport: (format: "csv" | "json", scope: "selected" | "all") => void;
   onSelectAll: () => void; onDeselectAll: () => void; onClose: () => void;
 }) {
@@ -746,8 +952,18 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, onExport, onSelectAll, 
 
   return (
     <div ref={ref} style={{ position: "fixed", left, top, zIndex: 9999, minWidth: menuW }} className="bg-sidebar border border-border rounded-lg shadow-2xl py-1">
+      {hasCellSel && <>
+        {btn("Copy", <Copy size={12} />, onCopy)}
+        {btn("Copy as CSV", <Copy size={12} />, onCopyCSV)}
+        {btn("Copy as Insert SQL", <Copy size={12} />, onCopyInsertSQL)}
+        <div className="my-1 border-t border-border" />
+      </>}
       {selectedCount > 0 && <>
         <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">{selectedCount} row{selectedCount > 1 ? "s" : ""} selected</div>
+        {btn("Copy", <Copy size={12} />, onCopyRows)}
+        {btn("Copy as CSV", <Copy size={12} />, onCopyRowsCSV)}
+        {btn("Copy as Insert SQL", <Copy size={12} />, onCopyRowsInsertSQL)}
+        <div className="my-1 border-t border-border" />
         {btn("Export selected as CSV", <Download size={12} />, () => onExport("csv", "selected"))}
         {btn("Export selected as JSON", <Download size={12} />, () => onExport("json", "selected"))}
         <div className="my-1 border-t border-border" />
@@ -759,6 +975,48 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, onExport, onSelectAll, 
       {selectedCount < totalCount
         ? btn("Select all rows", <Check size={12} />, onSelectAll)
         : btn("Deselect all", <X size={12} />, onDeselectAll)}
+    </div>
+  );
+}
+
+function EditCellCtxMenu({ x, y, onClose, onCopy, onCut, onPaste, onSetNull }: {
+  x: number; y: number;
+  onClose: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
+  onSetNull: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", h);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  }, [onClose]);
+
+  const menuW = 200;
+  const left = x + menuW > window.innerWidth ? x - menuW : x;
+  const top = y + 120 > window.innerHeight ? y - 120 : y;
+
+  const btn = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
+    <button
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => { onClick(); onClose(); }}
+      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${danger ? "text-red-400 hover:bg-red-500/10" : "text-text-primary hover:bg-accent"}`}
+    >
+      <span className="text-text-muted w-3.5 flex-shrink-0">{icon}</span>{label}
+    </button>
+  );
+
+  return (
+    <div ref={ref} style={{ position: "fixed", left, top, zIndex: 9999, minWidth: menuW }} className="bg-sidebar border border-border rounded-lg shadow-2xl py-1">
+      {btn("Copy", <Copy size={12} />, onCopy)}
+      {btn("Cut", <Scissors size={12} />, onCut)}
+      {btn("Paste", <Clipboard size={12} />, onPaste)}
+      <div className="my-1 border-t border-border" />
+      {btn("Set NULL", <Eraser size={12} />, onSetNull)}
     </div>
   );
 }

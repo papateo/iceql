@@ -77,6 +77,7 @@ pub fn run() {
             commands::get_databases,
             commands::get_tables,
             commands::get_columns,
+            commands::get_primary_keys,
             commands::execute_query,
             commands::get_table_data,
             commands::load_connections,

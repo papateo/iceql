@@ -2,7 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { v4 as uuidv4 } from "uuid";
-import { X, Database, Loader2, FolderOpen } from "lucide-react";
+import { X, Database, Loader2, FolderOpen, FileText } from "lucide-react";
 import type { ConnectionConfig, DbType } from "../types";
 
 interface Props {
@@ -15,6 +15,14 @@ const DEFAULTS: Record<DbType, Partial<ConnectionConfig>> = {
   postgresql: { host: "localhost", port: 5432, username: "postgres", database: "postgres" },
   mysql: { host: "localhost", port: 3306, username: "root", database: "" },
   sqlite: { host: "", port: 0, username: "", database: "" },
+  csv: { host: "", port: 0, username: "", database: "", filename: "" },
+};
+
+const DB_LABELS: Record<DbType, string> = {
+  postgresql: "PostgreSQL",
+  mysql: "MySQL",
+  sqlite: "SQLite",
+  csv: "CSV",
 };
 
 export default function AddConnectionModal({ initial, onSave, onClose }: Props) {
@@ -49,6 +57,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
       username: defs.username ?? f.username,
       database: defs.database ?? f.database,
     }));
+    setTestResult(null);
   };
 
   const testConnection = async () => {
@@ -65,6 +74,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
   };
 
   const isSqlite = form.db_type === "sqlite";
+  const isCsv = form.db_type === "csv";
 
   const browseSqliteFile = async () => {
     const selected = await open({
@@ -78,7 +88,25 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
     });
     if (typeof selected === "string") {
       set("filename", selected);
-      // Default the connection name to the file name if it's still empty.
+      if (!form.name.trim()) {
+        const base = selected.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") ?? "";
+        if (base) set("name", base);
+      }
+    }
+  };
+
+  const browseCsvFile = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "Select CSV file",
+      filters: [
+        { name: "CSV Files", extensions: ["csv", "tsv", "txt"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (typeof selected === "string") {
+      set("filename", selected);
       if (!form.name.trim()) {
         const base = selected.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") ?? "";
         if (base) set("name", base);
@@ -115,7 +143,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
           <div>
             <label className="block text-text-secondary text-sm mb-1">Database Type</label>
             <div className="flex gap-2">
-              {(["postgresql", "mysql", "sqlite"] as DbType[]).map((t) => (
+              {(["postgresql", "mysql", "sqlite", "csv"] as DbType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => changeType(t)}
@@ -125,13 +153,41 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
                       : "bg-accent border-border text-text-secondary hover:text-text-primary"
                   }`}
                 >
-                  {t === "postgresql" ? "PostgreSQL" : t === "mysql" ? "MySQL" : "SQLite"}
+                  {DB_LABELS[t]}
                 </button>
               ))}
             </div>
           </div>
 
-          {isSqlite ? (
+          {/* CSV file picker */}
+          {isCsv && (
+            <div>
+              <label className="block text-text-secondary text-sm mb-1">CSV File</label>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
+                  value={form.filename ?? ""}
+                  onChange={(e) => set("filename", e.target.value)}
+                  placeholder="/path/to/data.csv"
+                />
+                <button
+                  type="button"
+                  onClick={browseCsvFile}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-accent border border-border text-text-secondary hover:bg-accent/70 hover:text-text-primary transition-colors whitespace-nowrap"
+                >
+                  <FolderOpen size={15} />
+                  Browse
+                </button>
+              </div>
+              <p className="text-text-muted text-xs mt-1.5 flex items-center gap-1">
+                <FileText size={11} />
+                CSV data is loaded into memory — edits are not written back to the file.
+              </p>
+            </div>
+          )}
+
+          {/* SQLite file picker */}
+          {isSqlite && (
             <div>
               <label className="block text-text-secondary text-sm mb-1">Database File Path</label>
               <div className="flex gap-2">
@@ -152,7 +208,10 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
                 </button>
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* Host/port/credentials — only for postgres/mysql */}
+          {!isSqlite && !isCsv && (
             <>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
@@ -221,14 +280,16 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
         </div>
 
         <div className="flex gap-3 px-6 pb-6">
-          <button
-            onClick={testConnection}
-            disabled={testing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-          >
-            {testing ? <Loader2 size={14} className="animate-spin" /> : null}
-            Test Connection
-          </button>
+          {!isCsv && (
+            <button
+              onClick={testConnection}
+              disabled={testing}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+            >
+              {testing ? <Loader2 size={14} className="animate-spin" /> : null}
+              Test Connection
+            </button>
+          )}
           <div className="flex-1" />
           <button
             onClick={onClose}
@@ -238,7 +299,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
           </button>
           <button
             onClick={() => onSave(form)}
-            disabled={!form.name}
+            disabled={!form.name || (isCsv && !form.filename)}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
           >
             Save

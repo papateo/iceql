@@ -168,6 +168,7 @@ export default function App() {
     t === "postgresql" ? "text-blue-400"
     : t === "mysql" ? "text-orange-400"
     : t === "sqlite" ? "text-green-400"
+    : t === "csv" ? "text-yellow-400"
     : "text-text-secondary";
 
   return (

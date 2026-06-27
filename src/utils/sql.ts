@@ -34,7 +34,8 @@ export function buildUpdateStatements(
   columns: string[],
   rows: Record<string, unknown>[],
   edits: Map<string, unknown>,
-  rowIds?: (string | null)[]
+  rowIds?: (string | null)[],
+  primaryKeys?: string[]
 ): string[] {
   const byRow = new Map<number, Record<string, unknown>>();
   edits.forEach((value, key) => {
@@ -56,11 +57,13 @@ export function buildUpdateStatements(
       .join(", ");
     const ctid = rowIds?.[rowIdx];
     if (ctid) {
-      // Reliable single-row target via the physical row id (no LIMIT needed — ctid is unique).
       sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ctid = ${sqlLiteral(ctid)}`);
       return;
     }
-    const whereClauses = columns
+    // Use primary key columns for WHERE if available — more reliable than all-column match
+    // (avoids float precision issues and long text comparisons).
+    const whereCols = primaryKeys && primaryKeys.length > 0 ? primaryKeys : columns;
+    const whereClauses = whereCols
       .map((col) => {
         const v = original[col];
         return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;

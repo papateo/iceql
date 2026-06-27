@@ -22,7 +22,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        ConnectionPool::SQLite(p, _) => {
+        ConnectionPool::SQLite(p, _) | ConnectionPool::CSV(p, _) => {
             sqlx::query("SELECT 1")
                 .execute(p)
                 .await
@@ -94,6 +94,20 @@ pub async fn get_columns(
 }
 
 #[tauri::command]
+pub async fn get_primary_keys(
+    connection_id: String,
+    database: String,
+    table: String,
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<Vec<String>, String> {
+    let store = state.lock().await;
+    let pool = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    pool.get_primary_keys(&database, &table).await
+}
+
+#[tauri::command]
 pub async fn execute_query(
     connection_id: String,
     database: String,
@@ -122,7 +136,8 @@ pub async fn begin_transaction(
         match pool {
             ConnectionPool::Postgres(_, cfg)
             | ConnectionPool::MySQL(_, cfg)
-            | ConnectionPool::SQLite(_, cfg) => cfg.clone(),
+            | ConnectionPool::SQLite(_, cfg)
+            | ConnectionPool::CSV(_, cfg) => cfg.clone(),
         }
     };
 
