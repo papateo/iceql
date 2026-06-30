@@ -13,7 +13,7 @@ interface Props {
   onUpdate: (config: ConnectionConfig) => void;
   onDelete: (id: string) => void;
   onSelectDataSource: (configId: string) => void;
-  onConnectDemo: () => void;
+  onConnectDemo: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -40,11 +40,25 @@ export default function ConnectionManager({
   const [showModal, setShowModal] = useState(false);
   const [editingConn, setEditingConn] = useState<ConnectionConfig | undefined>();
   const [deletingConn, setDeletingConn] = useState<ConnectionConfig | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   const handleSave = (config: ConnectionConfig) => {
     if (editingConn) onUpdate(config); else onAdd(config);
     setShowModal(false);
     setEditingConn(undefined);
+  };
+
+  const handleDemoClick = async () => {
+    setDemoLoading(true);
+    setDemoError(null);
+    try {
+      await onConnectDemo();
+      onClose();
+    } catch (e) {
+      setDemoError(String(e));
+      setDemoLoading(false);
+    }
   };
 
   return (
@@ -61,11 +75,16 @@ export default function ConnectionManager({
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { onConnectDemo(); onClose(); }}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-accent text-text-secondary hover:text-text-primary border border-border hover:border-highlight/50 font-medium transition-colors"
+                onClick={handleDemoClick}
+                disabled={demoLoading}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-accent text-text-secondary hover:text-text-primary border border-border hover:border-highlight/50 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Connect to a built-in demo database with sample data"
               >
-                <FlaskConical size={12} /> Demo
+                {demoLoading
+                  ? <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  : <FlaskConical size={12} />
+                }
+                Demo
               </button>
               <button
                 onClick={() => { setEditingConn(undefined); setShowModal(true); }}
@@ -85,12 +104,19 @@ export default function ConnectionManager({
                 <Database size={24} className="opacity-40" />
                 <span>No connections yet. Click "New" to add one.</span>
                 <button
-                  onClick={() => { onConnectDemo(); onClose(); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border border-border hover:border-highlight/60 text-text-secondary hover:text-text-primary transition-colors"
+                  onClick={handleDemoClick}
+                  disabled={demoLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border border-border hover:border-highlight/60 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FlaskConical size={12} className="text-highlight" />
-                  Try Demo Database
+                  {demoLoading
+                    ? <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    : <FlaskConical size={12} className="text-highlight" />
+                  }
+                  {demoLoading ? "Connecting..." : "Try Demo Database"}
                 </button>
+                {demoError && (
+                  <p className="text-red-400 text-[11px] max-w-[240px] text-center leading-snug">{demoError}</p>
+                )}
               </div>
             ) : (
               savedConnections.map((conn) => {
