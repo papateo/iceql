@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Database, ScrollText, Settings, Plus, Unplug, Trash2 } from "lucide-react";
+import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard } from "lucide-react";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import ContextMenu from "./components/ContextMenu";
 import ConnectionManager from "./components/ConnectionManager";
@@ -56,6 +56,23 @@ export default function App() {
   const [tableSettings, setTableSettings] = useState<
     Record<string, { pageSize: number; infiniteScroll: boolean }>
   >({});
+
+  // Global right-click context menu for input / textarea elements
+  const [inputCtx, setInputCtx] = useState<{
+    x: number; y: number; el: HTMLInputElement | HTMLTextAreaElement;
+  } | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        e.preventDefault();
+        setInputCtx({ x: e.clientX, y: e.clientY, el: el as HTMLInputElement | HTMLTextAreaElement });
+      }
+    };
+    window.addEventListener("contextmenu", handler);
+    return () => window.removeEventListener("contextmenu", handler);
+  }, []);
 
   const updateTableSetting = (
     tabId: string,
@@ -430,6 +447,49 @@ export default function App() {
           onClose={() => setEditTableTarget(null)}
         />
       )}
+      {inputCtx && (() => {
+        const { x, y, el } = inputCtx;
+        const hasSelection = el.selectionStart !== el.selectionEnd;
+        const isPassword = (el as HTMLInputElement).type === "password";
+        const isReadOnly = el.readOnly;
+        return (
+          <ContextMenu
+            x={x}
+            y={y}
+            onClose={() => setInputCtx(null)}
+            items={[
+              {
+                label: "Cut",
+                icon: <Scissors size={12} />,
+                disabled: !hasSelection || isReadOnly || isPassword,
+                onClick: () => { el.focus(); document.execCommand("cut"); },
+              },
+              {
+                label: "Copy",
+                icon: <Copy size={12} />,
+                disabled: !hasSelection || isPassword,
+                onClick: () => { el.focus(); document.execCommand("copy"); },
+              },
+              {
+                label: "Paste",
+                icon: <Clipboard size={12} />,
+                disabled: isReadOnly,
+                onClick: () => {
+                  el.focus();
+                  document.execCommand("paste");
+                },
+              },
+              { separator: true },
+              {
+                label: "Select All",
+                disabled: false,
+                onClick: () => { el.focus(); el.select(); },
+              },
+            ]}
+          />
+        );
+      })()}
+
       {showConnManager && (
         <ConnectionManager
           savedConnections={store.savedConnections}

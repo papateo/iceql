@@ -5,6 +5,7 @@ export interface ContextMenuItem {
   icon?: React.ReactNode;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
   separator?: never;
 }
 
@@ -57,15 +58,16 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
         if ("separator" in item && item.separator) {
           return <div key={i} className="my-1 border-t border-border" />;
         }
-        const { label, icon, onClick, danger } = item as ContextMenuItem;
+        const { label, icon, onClick, danger, disabled } = item as ContextMenuItem;
         return (
           <button
             key={i}
-            onClick={() => { onClick(); onClose(); }}
-            className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors
+            onClick={() => { if (!disabled) { onClick(); onClose(); } }}
+            disabled={disabled}
+            className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors disabled:opacity-40 disabled:cursor-default
               ${danger
-                ? "text-red-400 hover:bg-red-500/10"
-                : "text-text-primary hover:bg-accent"
+                ? "text-red-400 hover:bg-red-500/10 disabled:hover:bg-transparent"
+                : "text-text-primary hover:bg-accent disabled:hover:bg-transparent"
               }`}
           >
             {icon && <span className="text-text-muted w-3.5 flex-shrink-0">{icon}</span>}
