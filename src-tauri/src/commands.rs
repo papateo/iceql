@@ -210,6 +210,31 @@ pub async fn get_table_data(
 }
 
 #[tauri::command]
+pub async fn connect_demo(
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<(String, ConnectionConfig), String> {
+    let mut store = state.lock().await;
+    // Reuse existing demo connection if already created
+    if let Some(existing_id) = store.iter().find_map(|(id, pool)| {
+        if let crate::db::ConnectionPool::SQLite(_, cfg) = pool {
+            if cfg.id == "iceql-demo" { Some(id.clone()) } else { None }
+        } else {
+            None
+        }
+    }) {
+        let config = match store.get(&existing_id).unwrap() {
+            crate::db::ConnectionPool::SQLite(_, cfg) => cfg.clone(),
+            _ => unreachable!(),
+        };
+        return Ok((existing_id, config));
+    }
+    let (pool, config) = crate::db::ConnectionPool::create_demo().await?;
+    let connection_id = Uuid::new_v4().to_string();
+    store.insert(connection_id.clone(), pool);
+    Ok((connection_id, config))
+}
+
+#[tauri::command]
 pub fn load_connections(app: tauri::AppHandle) -> Result<Vec<ConnectionConfig>, String> {
     persistence::load(&app)
 }

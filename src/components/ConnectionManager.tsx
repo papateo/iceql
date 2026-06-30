@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Plug, PlugZap, Edit2, Trash2, Database, X } from "lucide-react";
+import { Plus, Plug, PlugZap, Edit2, Trash2, Database, X, FlaskConical } from "lucide-react";
 import type { ConnectionConfig, ActiveConnection } from "../types";
 import AddConnectionModal from "./AddConnectionModal";
 
@@ -13,6 +13,7 @@ interface Props {
   onUpdate: (config: ConnectionConfig) => void;
   onDelete: (id: string) => void;
   onSelectDataSource: (configId: string) => void;
+  onConnectDemo: () => void;
   onClose: () => void;
 }
 
@@ -33,6 +34,7 @@ export default function ConnectionManager({
   onUpdate,
   onDelete,
   onSelectDataSource,
+  onConnectDemo,
   onClose,
 }: Props) {
   const [showModal, setShowModal] = useState(false);
@@ -59,6 +61,13 @@ export default function ConnectionManager({
             </div>
             <div className="flex items-center gap-1">
               <button
+                onClick={() => { onConnectDemo(); onClose(); }}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-accent text-text-secondary hover:text-text-primary border border-border hover:border-highlight/50 font-medium transition-colors"
+                title="Connect to a built-in demo database with sample data"
+              >
+                <FlaskConical size={12} /> Demo
+              </button>
+              <button
                 onClick={() => { setEditingConn(undefined); setShowModal(true); }}
                 className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-highlight text-bg hover:bg-highlight/90 font-medium transition-colors"
               >
@@ -72,9 +81,16 @@ export default function ConnectionManager({
 
           <div className="overflow-y-auto py-1">
             {savedConnections.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-32 text-text-muted text-xs gap-2 px-4 text-center">
+              <div className="flex flex-col items-center justify-center h-36 text-text-muted text-xs gap-3 px-4 text-center">
                 <Database size={24} className="opacity-40" />
-                <span>No connections yet. Click “New” to add one.</span>
+                <span>No connections yet. Click "New" to add one.</span>
+                <button
+                  onClick={() => { onConnectDemo(); onClose(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border border-border hover:border-highlight/60 text-text-secondary hover:text-text-primary transition-colors"
+                >
+                  <FlaskConical size={12} className="text-highlight" />
+                  Try Demo Database
+                </button>
               </div>
             ) : (
               savedConnections.map((conn) => {

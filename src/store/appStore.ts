@@ -211,6 +211,37 @@ export function useAppStore() {
     [savedConnections]
   );
 
+  const connectDemoDb = useCallback(async () => {
+    if (activeConnections.has("iceql-demo")) {
+      setSelectedConnectionId("iceql-demo");
+      setActiveDataSourceId("iceql-demo");
+      return;
+    }
+    const [connectionId, config] = await invoke<[string, ConnectionConfig]>("connect_demo");
+    const databases = await invoke<string[]>("get_databases", { connectionId });
+    const ac: ActiveConnection = {
+      connectionId,
+      config,
+      databases,
+      expandedDbs: new Set(),
+      dbTables: {},
+      expandedTables: new Set(),
+      dbColumns: {},
+      dbErrors: {},
+    };
+    setSavedConnections((prev) => {
+      if (prev.some((c) => c.id === config.id)) return prev;
+      return [...prev, config];
+    });
+    setActiveConnections((prev) => {
+      const next = new Map(prev);
+      next.set(config.id, ac);
+      return next;
+    });
+    setSelectedConnectionId(config.id);
+    setActiveDataSourceId(config.id);
+  }, [activeConnections]);
+
   const connectToDb = useCallback(
     async (config: ConnectionConfig): Promise<string> => {
       const connectionId = await invoke<string>("connect", { config });
@@ -726,6 +757,7 @@ export function useAppStore() {
     addConnection,
     updateConnection,
     deleteConnection,
+    connectDemoDb,
     connectToDb,
     disconnectFromDb,
     expandDatabase,

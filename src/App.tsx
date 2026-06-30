@@ -441,6 +441,7 @@ export default function App() {
           onUpdate={store.updateConnection}
           onDelete={store.deleteConnection}
           onSelectDataSource={store.selectDataSource}
+          onConnectDemo={store.connectDemoDb}
           onClose={() => setShowConnManager(false)}
         />
       )}
