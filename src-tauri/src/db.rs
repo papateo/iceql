@@ -314,29 +314,25 @@ impl ConnectionPool {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self, String> {
         match config.db_type.as_str() {
             "postgresql" => {
-                let url = format!(
-                    "postgres://{}:{}@{}:{}/{}",
-                    urlencoding_simple(&config.username),
-                    urlencoding_simple(&config.password),
-                    config.host,
-                    config.port,
-                    config.database
-                );
-                let pool = sqlx::PgPool::connect(&url)
+                let options = sqlx::postgres::PgConnectOptions::new()
+                    .host(&config.host)
+                    .port(config.port)
+                    .username(&config.username)
+                    .password(&config.password)
+                    .database(&config.database);
+                let pool = sqlx::PgPool::connect_with(options)
                     .await
                     .map_err(|e| format!("PostgreSQL connection failed: {e}"))?;
                 Ok(ConnectionPool::Postgres(pool, config.clone()))
             }
             "mysql" => {
-                let url = format!(
-                    "mysql://{}:{}@{}:{}/{}",
-                    urlencoding_simple(&config.username),
-                    urlencoding_simple(&config.password),
-                    config.host,
-                    config.port,
-                    config.database
-                );
-                let pool = sqlx::MySqlPool::connect(&url)
+                let options = sqlx::mysql::MySqlConnectOptions::new()
+                    .host(&config.host)
+                    .port(config.port)
+                    .username(&config.username)
+                    .password(&config.password)
+                    .database(&config.database);
+                let pool = sqlx::MySqlPool::connect_with(options)
                     .await
                     .map_err(|e| format!("MySQL connection failed: {e}"))?;
                 Ok(ConnectionPool::MySQL(pool, config.clone()))
@@ -364,33 +360,29 @@ impl ConnectionPool {
     pub async fn connect_single(config: &ConnectionConfig, database: &str) -> Result<Self, String> {
         match config.db_type.as_str() {
             "postgresql" => {
-                let url = format!(
-                    "postgres://{}:{}@{}:{}/{}",
-                    urlencoding_simple(&config.username),
-                    urlencoding_simple(&config.password),
-                    config.host,
-                    config.port,
-                    database
-                );
+                let options = sqlx::postgres::PgConnectOptions::new()
+                    .host(&config.host)
+                    .port(config.port)
+                    .username(&config.username)
+                    .password(&config.password)
+                    .database(database);
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(1)
-                    .connect(&url)
+                    .connect_with(options)
                     .await
                     .map_err(|e| format!("PostgreSQL connection failed: {e}"))?;
                 Ok(ConnectionPool::Postgres(pool, config.clone()))
             }
             "mysql" => {
-                let url = format!(
-                    "mysql://{}:{}@{}:{}/{}",
-                    urlencoding_simple(&config.username),
-                    urlencoding_simple(&config.password),
-                    config.host,
-                    config.port,
-                    database
-                );
+                let options = sqlx::mysql::MySqlConnectOptions::new()
+                    .host(&config.host)
+                    .port(config.port)
+                    .username(&config.username)
+                    .password(&config.password)
+                    .database(database);
                 let pool = sqlx::mysql::MySqlPoolOptions::new()
                     .max_connections(1)
-                    .connect(&url)
+                    .connect_with(options)
                     .await
                     .map_err(|e| format!("MySQL connection failed: {e}"))?;
                 Ok(ConnectionPool::MySQL(pool, config.clone()))
@@ -478,15 +470,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "postgres://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::postgres::PgConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::PgPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 let rows = sqlx::query(
@@ -563,15 +553,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "postgres://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::postgres::PgConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::PgPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 let rows = sqlx::query(
@@ -655,15 +643,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "postgres://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::postgres::PgConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::PgPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 let rows = sqlx::query(
@@ -716,15 +702,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "postgres://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::postgres::PgConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::PgPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 if is_dml(query) {
@@ -738,15 +722,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::MySqlPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "mysql://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::MySqlPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::mysql::MySqlConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::MySqlPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 if is_dml(query) {
@@ -784,15 +766,13 @@ impl ConnectionPool {
                 let pool_ref: &sqlx::PgPool = if database == config.database {
                     pool
                 } else {
-                    let url = format!(
-                        "postgres://{}:{}@{}:{}/{}",
-                        urlencoding_simple(&config.username),
-                        urlencoding_simple(&config.password),
-                        config.host,
-                        config.port,
-                        database
-                    );
-                    target_pool = sqlx::PgPool::connect(&url).await.map_err(|e| e.to_string())?;
+                    let options = sqlx::postgres::PgConnectOptions::new()
+                        .host(&config.host)
+                        .port(config.port)
+                        .username(&config.username)
+                        .password(&config.password)
+                        .database(database);
+                    target_pool = sqlx::PgPool::connect_with(options).await.map_err(|e| e.to_string())?;
                     &target_pool
                 };
                 count_query = format!("SELECT COUNT(*) FROM public.\"{table}\"");
@@ -977,18 +957,6 @@ async fn execute_dml_sqlite(pool: &sqlx::SqlitePool, query: &str, start: Instant
         row_count: result.rows_affected(),
         execution_time_ms: start.elapsed().as_millis() as u64,
     })
-}
-
-fn urlencoding_simple(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            '@' => vec!['%', '4', '0'],
-            ':' => vec!['%', '3', 'A'],
-            '/' => vec!['%', '2', 'F'],
-            ' ' => vec!['%', '2', '0'],
-            _ => vec![c],
-        })
-        .collect()
 }
 
 async fn execute_pg(
