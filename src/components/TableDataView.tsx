@@ -45,6 +45,11 @@ interface EditCell {
 }
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 500] as const;
+const MARKER_W = 40;
+const CELL_CHAR_W = 7;
+const CELL_MIN_W = 80;
+const CELL_MAX_W = 320;
+const CELL_PAD = 28;
 
 function CellValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
@@ -502,12 +507,41 @@ export default function TableDataView({
     return r;
   }, [rows, filters]);
 
+  // Fixed per-column pixel widths, sampled from the loaded rows. Needed because div-based
+  // virtualized rows can't rely on <table>'s automatic cross-row column sizing.
+  const colWidths = useMemo(() => {
+    const sampleSize = Math.min(rows.length, 500);
+    return visibleColumns.map((col) => {
+      let maxLen = col.length;
+      for (let r = 0; r < sampleSize; r++) {
+        const v = rows[r][col];
+        const len = v === null || v === undefined ? 4 : String(v).length;
+        if (len > maxLen) maxLen = len;
+      }
+      return Math.min(CELL_MAX_W, Math.max(CELL_MIN_W, maxLen * CELL_CHAR_W + CELL_PAD));
+    });
+  }, [visibleColumns, rows]);
+
+  const totalWidth = useMemo(() => MARKER_W + colWidths.reduce((a, b) => a + b, 0), [colWidths]);
+
   const virtualizer = useVirtualizer({
     count: displayedRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 29,
     overscan: 20,
   });
+
+  // Column virtualization: with wide tables (dozens of columns), rendering every column for
+  // every mounted row makes each row-mount during vertical scroll cost O(columns). Only the
+  // columns currently in the horizontal viewport (+ overscan) get rendered.
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: visibleColumns.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => colWidths[i],
+    overscan: 5,
+  });
+  const virtualColumns = columnVirtualizer.getVirtualItems();
 
   // Trigger fetchMore when near end — only when infinite scroll is ON
   useEffect(() => {
@@ -643,76 +677,83 @@ export default function TableDataView({
             <span className="text-sm">Loading…</span>
           </div>
         ) : (
-          <table className="w-full text-xs border-collapse">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-accent border-b border-border">
-                <th
-                  className={`px-2 py-2 text-center font-medium w-10 border-r border-border select-none cursor-pointer hover:bg-accent/80 transition-colors ${someSelected || allSelected ? "text-highlight" : "text-text-muted"}`}
+          <div className="text-xs" style={{ width: totalWidth, minWidth: "100%" }}>
+            <div className="sticky top-0 z-10">
+              <div className="flex bg-accent border-b border-border">
+                <div
+                  className={`flex items-center justify-center px-2 py-2 font-medium border-r border-border select-none cursor-pointer hover:bg-accent/80 transition-colors ${someSelected || allSelected ? "text-highlight" : "text-text-muted"}`}
+                  style={{ width: MARKER_W, flexShrink: 0 }}
                   onClick={toggleAll}
                   title={allSelected ? "Deselect all" : "Select all"}
                 >
                   #
-                </th>
-                {visibleColumns.map((col) => {
+                </div>
+                {visibleColumns.map((col, i) => {
                   const isSorted = sortCol === col;
                   return (
-                    <th key={col} className="px-3 py-2 text-left text-text-secondary font-medium whitespace-nowrap border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group" onClick={() => handleSortClick(col)}>
-                      <div className="flex items-center gap-1">
-                        <span className={isSorted ? "text-highlight" : ""}>{col}</span>
-                        {isSorted
-                          ? sortDir === "asc" ? <ChevronUp size={11} className="text-highlight" /> : <ChevronDown size={11} className="text-highlight" />
-                          : <ChevronsUpDown size={11} className="opacity-0 group-hover:opacity-40 transition-opacity" />}
-                      </div>
-                    </th>
+                    <div
+                      key={col}
+                      className="flex items-center gap-1 px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group overflow-hidden"
+                      style={{ width: colWidths[i], flexShrink: 0 }}
+                      onClick={() => handleSortClick(col)}
+                      title={col}
+                    >
+                      <span className={`truncate ${isSorted ? "text-highlight" : ""}`}>{col}</span>
+                      {isSorted
+                        ? sortDir === "asc" ? <ChevronUp size={11} className="text-highlight flex-shrink-0" /> : <ChevronDown size={11} className="text-highlight flex-shrink-0" />
+                        : <ChevronsUpDown size={11} className="opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />}
+                    </div>
                   );
                 })}
-              </tr>
+              </div>
               {showFilter && (
-                <tr className="bg-sidebar border-b border-border">
-                  <td className="w-10 border-r border-border" />
-                  {visibleColumns.map((col) => (
-                    <td key={col} className="px-1 py-1 border-r border-border last:border-r-0">
+                <div className="flex bg-sidebar border-b border-border">
+                  <div style={{ width: MARKER_W, flexShrink: 0 }} className="border-r border-border" />
+                  {visibleColumns.map((col, i) => (
+                    <div key={col} style={{ width: colWidths[i], flexShrink: 0 }} className="px-1 py-1 border-r border-border last:border-r-0">
                       <div className="relative">
                         <input type="text" placeholder="Filter…" value={filters[col] ?? ""} onChange={(e) => setFilters((prev) => ({ ...prev, [col]: e.target.value }))} className="w-full text-[11px] bg-accent/60 border border-transparent focus:border-border rounded px-2 py-0.5 text-text-secondary placeholder:text-text-muted outline-none focus:bg-accent pr-5" />
                         {filters[col] && (
                           <button onClick={() => clearFilter(col)} className="absolute right-1 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"><X size={10} /></button>
                         )}
                       </div>
-                    </td>
+                    </div>
                   ))}
-                </tr>
+                </div>
               )}
-            </thead>
-            <tbody>
-              {virtualizer.getVirtualItems().length > 0 && (
-                <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={visibleColumns.length + 1} className="p-0 border-0" /></tr>
-              )}
+            </div>
+            <div style={{ position: "relative", height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((vRow) => {
                 const displayIdx = vRow.index;
                 const displayRow = displayedRows[displayIdx];
                 const rowIdx = displayRow.__idx;
                 const isSelected = selectedRows.has(rowIdx);
                 return (
-                  <tr
+                  <div
                     key={rowIdx}
                     className={`border-b border-border/50 transition-colors ${isSelected && !cellSel ? "bg-highlight/10" : "hover:bg-accent/30"}`}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: vRow.size, transform: `translateY(${vRow.start}px)` }}
                     onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
                   >
-                    <td
-                      className={`px-2 py-1.5 w-10 border-r border-border/50 text-right select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
+                    <div
+                      className={`absolute top-0 flex items-center justify-end px-2 border-r border-border/50 select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
+                      style={{ left: 0, width: MARKER_W, height: "100%" }}
                       onMouseDown={(e) => { setCellSel(null); handleRowMouseDown(e, rowIdx); }}
                       onMouseEnter={() => handleRowMouseEnter(rowIdx)}
                     >
                       {rowIdx + 1}
-                    </td>
-                    {visibleColumns.map((col, colIdx) => {
+                    </div>
+                    {virtualColumns.map((vCol) => {
+                      const colIdx = vCol.index;
+                      const col = visibleColumns[colIdx];
                       const isActive = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
                       const edited = isEdited(rowIdx, col);
                       const inSel = isCellInSel(displayIdx, colIdx);
                       return (
-                        <td
+                        <div
                           key={col}
-                          className={`relative border-r border-border/50 last:border-r-0 max-w-[400px] ${isActive ? "select-text" : "select-none"} ${inSel ? "bg-blue-500/20" : edited ? "bg-highlight/10" : ""}`}
+                          className={`absolute top-0 flex items-center border-r border-border/50 overflow-hidden ${isActive ? "select-text" : "select-none"} ${inSel ? "bg-blue-500/20" : edited ? "bg-highlight/10" : ""}`}
+                          style={{ left: MARKER_W + vCol.start, width: vCol.size, height: "100%" }}
                           onMouseDown={(e) => {
                             if (e.button !== 0) return;
                             if (selectedRows.size > 0) setSelectedRows(new Set());
@@ -726,7 +767,7 @@ export default function TableDataView({
                           onDoubleClick={() => { setCellSel(null); startEdit(rowIdx, col); }}
                         >
                           {isActive ? (
-                            <input ref={inputRef} className="w-full h-full px-3 py-1.5 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value ?? ""}
+                            <input ref={inputRef} className="w-full h-full px-3 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value ?? ""}
                               placeholder={editingCell.value === null ? "NULL" : undefined}
                               onChange={(e) => setEditingCell((prev) => prev ? { ...prev, value: e.target.value } : null)}
                               onMouseDown={(e) => e.stopPropagation()}
@@ -739,26 +780,19 @@ export default function TableDataView({
                               onBlur={commitCell}
                             />
                           ) : (
-                            <div className={`px-3 py-1.5 cursor-default ${edited ? "text-highlight" : "text-text-primary"}`}>
+                            <div className={`px-3 w-full min-w-0 cursor-default ${edited ? "text-highlight" : "text-text-primary"}`}>
                               <CellValue value={getCellValue(rowIdx, col)} />
                               {edited && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-highlight" />}
                             </div>
                           )}
-                        </td>
+                        </div>
                       );
                     })}
-                  </tr>
+                  </div>
                 );
               })}
-              {virtualizer.getVirtualItems().length > 0 && (() => {
-                const items = virtualizer.getVirtualItems();
-                const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
-                return bottomPad > 0
-                  ? <tr><td style={{ height: bottomPad }} colSpan={visibleColumns.length + 1} className="p-0 border-0" /></tr>
-                  : null;
-              })()}
-            </tbody>
-          </table>
+            </div>
+          </div>
         )}
 
         {!loading && displayedRows.length === 0 && !error && (

@@ -25,6 +25,12 @@ interface EditCell {
   value: string;
 }
 
+const MARKER_W = 40;
+const CELL_CHAR_W = 7;
+const CELL_MIN_W = 80;
+const CELL_MAX_W = 320;
+const CELL_PAD = 28;
+
 function displayValue(val: unknown) {
   if (val === null || val === undefined)
     return <span className="text-text-muted italic text-xs">NULL</span>;
@@ -170,12 +176,41 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const hasEdits = edits.size > 0;
 
+  // Fixed per-column pixel widths, sampled from the loaded rows. Needed because div-based
+  // virtualized rows can't rely on <table>'s automatic cross-row column sizing.
+  const colWidths = useMemo(() => {
+    const sampleSize = Math.min(data.length, 500);
+    return columns.map((col) => {
+      let maxLen = col.length;
+      for (let r = 0; r < sampleSize; r++) {
+        const v = data[r][col];
+        const len = v === null || v === undefined ? 4 : String(v).length;
+        if (len > maxLen) maxLen = len;
+      }
+      return Math.min(CELL_MAX_W, Math.max(CELL_MIN_W, maxLen * CELL_CHAR_W + CELL_PAD));
+    });
+  }, [columns, data]);
+
+  const totalWidth = useMemo(() => MARKER_W + colWidths.reduce((a, b) => a + b, 0), [colWidths]);
+
   const virtualizer = useVirtualizer({
     count: data.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 33,
     overscan: 20,
   });
+
+  // Column virtualization: with wide tables (dozens of columns), rendering every column for
+  // every mounted row makes each row-mount during vertical scroll cost O(columns). Only the
+  // columns currently in the horizontal viewport (+ overscan) get rendered.
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: columns.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => colWidths[i],
+    overscan: 5,
+  });
+  const virtualColumns = columnVirtualizer.getVirtualItems();
 
   const startEdit = (rowIdx: number, col: string) => {
     if (!editableTable) return;
@@ -369,89 +404,85 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
       {/* Table */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-accent border-b border-border">
-              <th
-                className={`px-2 py-2 text-center font-medium w-10 border-r border-border select-none cursor-pointer hover:bg-accent/60 transition-colors ${someSelected || allSelected ? "text-highlight" : "text-text-muted"}`}
-                onClick={toggleAll}
-                title={allSelected ? "Deselect all" : "Select all"}
+        <div className="text-xs" style={{ width: totalWidth, minWidth: "100%" }}>
+          <div className="flex sticky top-0 z-10 bg-accent border-b border-border">
+            <div
+              className={`flex items-center justify-center px-2 py-2 font-medium border-r border-border select-none cursor-pointer hover:bg-accent/60 transition-colors ${someSelected || allSelected ? "text-highlight" : "text-text-muted"}`}
+              style={{ width: MARKER_W, flexShrink: 0 }}
+              onClick={toggleAll}
+              title={allSelected ? "Deselect all" : "Select all"}
+            >
+              #
+            </div>
+            {columns.map((col, i) => (
+              <div
+                key={col}
+                className="flex items-center px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 truncate"
+                style={{ width: colWidths[i], flexShrink: 0 }}
+                title={col}
               >
-                #
-              </th>
-              {columns.map((col) => (
-                <th
-                  key={col}
-                  className="px-3 py-2 text-left text-text-secondary font-medium whitespace-nowrap border-r border-border last:border-r-0"
-                >
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {virtualizer.getVirtualItems().length > 0 && (
-              <tr><td style={{ height: virtualizer.getVirtualItems()[0].start }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
-            )}
+                {col}
+              </div>
+            ))}
+          </div>
+          <div style={{ position: "relative", height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((vRow) => {
               const rowIdx = vRow.index;
               const isSelected = selectedRows.has(rowIdx);
               return (
-              <tr
-                key={rowIdx}
-                className={`border-b border-border/50 transition-colors ${isSelected ? "bg-highlight/10" : "hover:bg-accent/40"}`}
-                onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); if (!selectedRows.has(rowIdx)) { lastClickedRow.current = rowIdx; setSelectedRows(new Set([rowIdx])); } }}
-              >
-                <td
-                  className={`px-2 py-1.5 w-10 border-r border-border/50 text-right select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
-                  onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
-                  onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                <div
+                  key={rowIdx}
+                  className={`border-b border-border/50 transition-colors ${isSelected ? "bg-highlight/10" : "hover:bg-accent/40"}`}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: vRow.size, transform: `translateY(${vRow.start}px)` }}
+                  onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); if (!selectedRows.has(rowIdx)) { lastClickedRow.current = rowIdx; setSelectedRows(new Set([rowIdx])); } }}
                 >
-                  {rowIdx + 1}
-                </td>
-                {columns.map((col) => {
-                  const editKey = `${rowIdx}:${col}`;
-                  const isEditing = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
-                  const edited = edits.has(editKey);
-                  return (
-                    <td
-                      key={col}
-                      onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }}
-                      onDoubleClick={() => startEdit(rowIdx, col)}
-                      className={`px-3 py-1.5 border-r border-border/50 last:border-r-0 max-w-[400px] relative ${
-                        edited ? "bg-highlight/10 text-highlight" : "text-text-primary"
-                      } ${editableTable ? "cursor-text" : ""} ${isEditing ? "select-text" : "select-none"}`}
-                    >
-                      {displayValue(cellValue(rowIdx, col))}
-                      {isEditing && (
-                        <input
-                          ref={inputRef}
-                          value={editingCell.value}
-                          onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
-                          onBlur={commitCellEdit}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") commitCellEdit();
-                            else if (e.key === "Escape") setEditingCell(null);
-                          }}
-                          className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs selection:bg-highlight/40 selection:text-text-primary"
-                          style={{ userSelect: "text", WebkitUserSelect: "text" }}
-                        />
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            );})}
-            {virtualizer.getVirtualItems().length > 0 && (() => {
-              const items = virtualizer.getVirtualItems();
-              const bottomPad = virtualizer.getTotalSize() - items[items.length - 1].end;
-              return bottomPad > 0
-                ? <tr><td style={{ height: bottomPad }} colSpan={columns.length + 1} className="p-0 border-0" /></tr>
-                : null;
-            })()}
-          </tbody>
-        </table>
+                  <div
+                    className={`absolute top-0 flex items-center justify-end px-2 border-r border-border/50 select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
+                    style={{ left: 0, width: MARKER_W, height: "100%" }}
+                    onMouseDown={(e) => handleRowMouseDown(e, rowIdx)}
+                    onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                  >
+                    {rowIdx + 1}
+                  </div>
+                  {virtualColumns.map((vCol) => {
+                    const col = columns[vCol.index];
+                    const editKey = `${rowIdx}:${col}`;
+                    const isEditing = editingCell?.rowIdx === rowIdx && editingCell?.col === col;
+                    const edited = edits.has(editKey);
+                    return (
+                      <div
+                        key={col}
+                        onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }}
+                        onDoubleClick={() => startEdit(rowIdx, col)}
+                        className={`absolute top-0 flex items-center px-3 border-r border-border/50 overflow-hidden ${
+                          edited ? "bg-highlight/10 text-highlight" : "text-text-primary"
+                        } ${editableTable ? "cursor-text" : ""} ${isEditing ? "select-text" : "select-none"}`}
+                        style={{ left: MARKER_W + vCol.start, width: vCol.size, height: "100%" }}
+                      >
+                        {displayValue(cellValue(rowIdx, col))}
+                        {isEditing && (
+                          <input
+                            ref={inputRef}
+                            value={editingCell.value}
+                            onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
+                            onBlur={commitCellEdit}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitCellEdit();
+                              else if (e.key === "Escape") setEditingCell(null);
+                            }}
+                            className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs selection:bg-highlight/40 selection:text-text-primary"
+                            style={{ userSelect: "text", WebkitUserSelect: "text" }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {data.length === 0 && (
           <div className="flex items-center justify-center py-8 text-text-muted text-sm">
