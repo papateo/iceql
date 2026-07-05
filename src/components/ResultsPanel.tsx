@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2 } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
@@ -30,6 +30,7 @@ const CELL_CHAR_W = 7;
 const CELL_MIN_W = 80;
 const CELL_MAX_W = 320;
 const CELL_PAD = 28;
+const RESIZE_MIN_W = 50;
 
 function displayValue(val: unknown) {
   if (val === null || val === undefined)
@@ -53,6 +54,9 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [colWidthOverrides, setColWidthOverrides] = useState<Map<string, number>>(new Map());
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastClickedRow = useRef<number | null>(null);
@@ -78,7 +82,38 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     setCommitError(null);
     setShowPreview(false);
     setSelectedRows(new Set());
+    setSortCol(null);
+    setSortDir("asc");
   }, [result]);
+
+  // Client-side sort: results here come from an arbitrary user query (already fully loaded,
+  // not paginated), so unlike TableDataView there's no SQL to re-run with an ORDER BY — we
+  // just sort the in-memory rows and keep `rowIdx` pointing at the original `data` index
+  // (edits/selection/rowIds are all keyed by that original index, not display position).
+  const sortedIndices = useMemo(() => {
+    const indices = data.map((_, i) => i);
+    if (!sortCol) return indices;
+    const compare = (a: unknown, b: unknown): number => {
+      const aNull = a === null || a === undefined;
+      const bNull = b === null || b === undefined;
+      if (aNull && bNull) return 0;
+      if (aNull) return -1;
+      if (bNull) return 1;
+      if (typeof a === "number" && typeof b === "number") return a - b;
+      const as = String(a), bs = String(b);
+      return as < bs ? -1 : as > bs ? 1 : 0;
+    };
+    indices.sort((a, b) => {
+      const cmp = compare(data[a][sortCol], data[b][sortCol]);
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+    return indices;
+  }, [data, sortCol, sortDir]);
+
+  const handleSortClick = (col: string) => {
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("asc"); }
+  };
 
   const allSelected = data.length > 0 && selectedRows.size === data.length;
   const someSelected = selectedRows.size > 0 && !allSelected;
@@ -177,8 +212,10 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const hasEdits = edits.size > 0;
 
   // Fixed per-column pixel widths, sampled from the loaded rows. Needed because div-based
-  // virtualized rows can't rely on <table>'s automatic cross-row column sizing.
-  const colWidths = useMemo(() => {
+  // virtualized rows can't rely on <table>'s automatic cross-row column sizing. Kept separate
+  // from `colWidths` so a manual resize (which only touches colWidthOverrides) doesn't re-scan
+  // sample rows for every column on every drag tick.
+  const baseColWidths = useMemo(() => {
     const sampleSize = Math.min(data.length, 500);
     return columns.map((col) => {
       let maxLen = col.length;
@@ -190,6 +227,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
       return Math.min(CELL_MAX_W, Math.max(CELL_MIN_W, maxLen * CELL_CHAR_W + CELL_PAD));
     });
   }, [columns, data]);
+
+  const colWidths = useMemo(
+    () => columns.map((col, i) => colWidthOverrides.get(col) ?? baseColWidths[i]),
+    [columns, baseColWidths, colWidthOverrides]
+  );
 
   const totalWidth = useMemo(() => MARKER_W + colWidths.reduce((a, b) => a + b, 0), [colWidths]);
 
@@ -210,6 +252,26 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     estimateSize: (i) => colWidths[i],
     overscan: 5,
   });
+
+  // Drag-to-resize a column header. react-virtual's internal measurement cache only
+  // invalidates via an explicit resizeItem() call — just changing colWidths (state) updates
+  // the header, but the virtualized body cells need resizeItem() to pick up the new size too.
+  const startColumnResize = useCallback((e: React.MouseEvent, col: string, index: number, startWidth: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(RESIZE_MIN_W, startWidth + (ev.clientX - startX));
+      setColWidthOverrides((prev) => new Map(prev).set(col, newWidth));
+      columnVirtualizer.resizeItem(index, newWidth);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [columnVirtualizer]);
   const virtualColumns = columnVirtualizer.getVirtualItems();
 
   const startEdit = (rowIdx: number, col: string) => {
@@ -414,20 +476,32 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
             >
               #
             </div>
-            {columns.map((col, i) => (
-              <div
-                key={col}
-                className="flex items-center px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 truncate"
-                style={{ width: colWidths[i], flexShrink: 0 }}
-                title={col}
-              >
-                {col}
-              </div>
-            ))}
+            {columns.map((col, i) => {
+              const isSorted = sortCol === col;
+              return (
+                <div
+                  key={col}
+                  className="relative flex items-center gap-1 px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/60 group overflow-hidden"
+                  style={{ width: colWidths[i], flexShrink: 0 }}
+                  onClick={() => handleSortClick(col)}
+                  title={col}
+                >
+                  <span className={`truncate ${isSorted ? "text-highlight" : ""}`}>{col}</span>
+                  {isSorted
+                    ? sortDir === "asc" ? <ChevronUp size={11} className="text-highlight flex-shrink-0" /> : <ChevronDown size={11} className="text-highlight flex-shrink-0" />
+                    : <ChevronsUpDown size={11} className="opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />}
+                  <div
+                    onMouseDown={(e) => startColumnResize(e, col, i, colWidths[i])}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-highlight/60 active:bg-highlight"
+                  />
+                </div>
+              );
+            })}
           </div>
           <div style={{ position: "relative", height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((vRow) => {
-              const rowIdx = vRow.index;
+              const rowIdx = sortedIndices[vRow.index];
               const isSelected = selectedRows.has(rowIdx);
               return (
                 <div

@@ -50,6 +50,7 @@ const CELL_CHAR_W = 7;
 const CELL_MIN_W = 80;
 const CELL_MAX_W = 320;
 const CELL_PAD = 28;
+const RESIZE_MIN_W = 50;
 
 function CellValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
@@ -95,6 +96,7 @@ export default function TableDataView({
   const [editCtxMenu, setEditCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [colWidthOverrides, setColWidthOverrides] = useState<Map<string, number>>(new Map());
   const lastClickedRow = useRef<number | null>(null);
   const isDragging = useRef(false);
   const dragMode = useRef<"select" | "deselect">("select");
@@ -508,8 +510,10 @@ export default function TableDataView({
   }, [rows, filters]);
 
   // Fixed per-column pixel widths, sampled from the loaded rows. Needed because div-based
-  // virtualized rows can't rely on <table>'s automatic cross-row column sizing.
-  const colWidths = useMemo(() => {
+  // virtualized rows can't rely on <table>'s automatic cross-row column sizing. Kept separate
+  // from `colWidths` so a manual resize (which only touches colWidthOverrides) doesn't re-scan
+  // sample rows for every column on every drag tick.
+  const baseColWidths = useMemo(() => {
     const sampleSize = Math.min(rows.length, 500);
     return visibleColumns.map((col) => {
       let maxLen = col.length;
@@ -521,6 +525,11 @@ export default function TableDataView({
       return Math.min(CELL_MAX_W, Math.max(CELL_MIN_W, maxLen * CELL_CHAR_W + CELL_PAD));
     });
   }, [visibleColumns, rows]);
+
+  const colWidths = useMemo(
+    () => visibleColumns.map((col, i) => colWidthOverrides.get(col) ?? baseColWidths[i]),
+    [visibleColumns, baseColWidths, colWidthOverrides]
+  );
 
   const totalWidth = useMemo(() => MARKER_W + colWidths.reduce((a, b) => a + b, 0), [colWidths]);
 
@@ -542,6 +551,26 @@ export default function TableDataView({
     overscan: 5,
   });
   const virtualColumns = columnVirtualizer.getVirtualItems();
+
+  // Drag-to-resize a column header. react-virtual's internal measurement cache only
+  // invalidates via an explicit resizeItem() call — just changing colWidths (state) updates
+  // the header, but the virtualized body cells need resizeItem() to pick up the new size too.
+  const startColumnResize = useCallback((e: React.MouseEvent, col: string, index: number, startWidth: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(RESIZE_MIN_W, startWidth + (ev.clientX - startX));
+      setColWidthOverrides((prev) => new Map(prev).set(col, newWidth));
+      columnVirtualizer.resizeItem(index, newWidth);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [columnVirtualizer]);
 
   // Trigger fetchMore when near end — only when infinite scroll is ON
   useEffect(() => {
@@ -693,7 +722,7 @@ export default function TableDataView({
                   return (
                     <div
                       key={col}
-                      className="flex items-center gap-1 px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group overflow-hidden"
+                      className="relative flex items-center gap-1 px-3 py-2 text-text-secondary font-medium border-r border-border last:border-r-0 select-none cursor-pointer hover:bg-accent/80 group overflow-hidden"
                       style={{ width: colWidths[i], flexShrink: 0 }}
                       onClick={() => handleSortClick(col)}
                       title={col}
@@ -702,6 +731,11 @@ export default function TableDataView({
                       {isSorted
                         ? sortDir === "asc" ? <ChevronUp size={11} className="text-highlight flex-shrink-0" /> : <ChevronDown size={11} className="text-highlight flex-shrink-0" />
                         : <ChevronsUpDown size={11} className="opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />}
+                      <div
+                        onMouseDown={(e) => startColumnResize(e, col, i, colWidths[i])}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-highlight/60 active:bg-highlight"
+                      />
                     </div>
                   );
                 })}
