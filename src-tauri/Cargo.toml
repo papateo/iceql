@@ -1,6 +1,6 @@
 [package]
 name = "iceql"
-version = "0.1.3"
+version = "0.1.4"
 description = "IceQL - SQL Management Desktop App"
 authors = []
 license = ""
