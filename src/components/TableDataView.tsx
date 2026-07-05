@@ -15,9 +15,6 @@ import {
   Trash2,
   Columns3,
   Copy,
-  Clipboard,
-  Eraser,
-  Scissors,
   Eye,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -25,6 +22,7 @@ import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import * as XLSX from "xlsx";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
+import EditCellCtxMenu from "./EditCellCtxMenu";
 
 interface Props {
   configId: string;
@@ -218,6 +216,16 @@ export default function TableDataView({
   };
 
   const ac = activeConnections.get(configId);
+  // Schema default values for the open table, keyed by column name — powers "Set Default" in
+  // the edit-cell context menu. Absent (undefined) when the sidebar hasn't loaded this table's
+  // columns yet; in that case "Set Default" just stays hidden rather than guessing.
+  const columnDefaults = useMemo(() => {
+    const cols = ac?.dbColumns[`${database}.${table}`];
+    if (!cols) return {};
+    const map: Record<string, string | null> = {};
+    cols.forEach((c) => { map[c.name] = c.column_default; });
+    return map;
+  }, [ac, database, table]);
   const hasEdits = edits.size > 0;
   const hasMore = rows.length < totalCount;
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
@@ -984,6 +992,12 @@ export default function TableDataView({
             setEditingCell((prev) => prev ? { ...prev, value: null } : null);
             setTimeout(() => inputRef.current?.focus(), 0);
           }}
+          hasDefault={columnDefaults[editingCell.col] !== undefined && columnDefaults[editingCell.col] !== null}
+          onSetDefault={() => {
+            const def = columnDefaults[editingCell.col];
+            setEditingCell((prev) => prev ? { ...prev, value: def ?? null } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
         />
       )}
 
@@ -1082,48 +1096,6 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
       {selectedCount < totalCount
         ? btn("Select all rows", <Check size={12} />, onSelectAll)
         : btn("Deselect all", <X size={12} />, onDeselectAll)}
-    </div>
-  );
-}
-
-function EditCellCtxMenu({ x, y, onClose, onCopy, onCut, onPaste, onSetNull }: {
-  x: number; y: number;
-  onClose: () => void;
-  onCopy: () => void;
-  onCut: () => void;
-  onPaste: () => void;
-  onSetNull: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("mousedown", h);
-    document.addEventListener("keydown", k);
-    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
-  }, [onClose]);
-
-  const menuW = 200;
-  const left = x + menuW > window.innerWidth ? x - menuW : x;
-  const top = y + 120 > window.innerHeight ? y - 120 : y;
-
-  const btn = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
-    <button
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={() => { onClick(); onClose(); }}
-      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${danger ? "text-red-400 hover:bg-red-500/10" : "text-text-primary hover:bg-accent"}`}
-    >
-      <span className="text-text-muted w-3.5 flex-shrink-0">{icon}</span>{label}
-    </button>
-  );
-
-  return (
-    <div ref={ref} style={{ position: "fixed", left, top, zIndex: 9999, minWidth: menuW }} className="bg-sidebar border border-border rounded-lg shadow-2xl py-1">
-      {btn("Copy", <Copy size={12} />, onCopy)}
-      {btn("Cut", <Scissors size={12} />, onCut)}
-      {btn("Paste", <Clipboard size={12} />, onPaste)}
-      <div className="my-1 border-t border-border" />
-      {btn("Set NULL", <Eraser size={12} />, onSetNull)}
     </div>
   );
 }

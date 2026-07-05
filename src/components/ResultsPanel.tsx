@@ -6,6 +6,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
 import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
 import SqlPreview from "./SqlPreview";
+import EditCellCtxMenu from "./EditCellCtxMenu";
 
 interface Props {
   result: QueryResult | null;
@@ -16,13 +17,16 @@ interface Props {
   dbType: string;
   database: string;
   rowIds: string[] | null;
+  // Schema default value per column of `editableTable`, for "Set Default" in the edit-cell
+  // context menu. Empty when editableTable is unset or its schema hasn't loaded yet.
+  columnDefaults: Record<string, string | null>;
   onCommit: (sqls: string[]) => Promise<number>;
 }
 
 interface EditCell {
   rowIdx: number;
   col: string;
-  value: string;
+  value: string | null;
 }
 
 const MARKER_W = 40;
@@ -43,7 +47,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, onCommit }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, columnDefaults, onCommit }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -52,6 +56,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [commitNotice, setCommitNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [editCtxMenu, setEditCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [colWidthOverrides, setColWidthOverrides] = useState<Map<string, number>>(new Map());
@@ -280,7 +285,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
     const current = edits.has(editKey) ? edits.get(editKey) : data[rowIdx][col];
-    setEditingCell({ rowIdx, col, value: current === null || current === undefined ? "" : String(current) });
+    setEditingCell({ rowIdx, col, value: current === null || current === undefined ? null : String(current) });
   };
 
   const commitCellEdit = () => {
@@ -288,10 +293,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     const { rowIdx, col, value } = editingCell;
     const editKey = `${rowIdx}:${col}`;
     const original = data[rowIdx][col];
-    const originalStr = original === null || original === undefined ? "" : String(original);
+    const isOriginalNull = original === null || original === undefined;
+    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === String(original));
     setEdits((prev) => {
       const next = new Map(prev);
-      if (value === originalStr) next.delete(editKey);
+      if (noChange) next.delete(editKey);
       else next.set(editKey, value);
       return next;
     });
@@ -537,10 +543,12 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                         {isEditing && (
                           <input
                             ref={inputRef}
-                            value={editingCell.value}
+                            value={editingCell.value ?? ""}
+                            placeholder={editingCell.value === null ? "NULL" : undefined}
                             onChange={(e) => setEditingCell({ ...editingCell, value: e.target.value })}
                             onBlur={commitCellEdit}
                             onMouseDown={(e) => e.stopPropagation()}
+                            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setEditCtxMenu({ x: e.clientX, y: e.clientY }); }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") commitCellEdit();
                               else if (e.key === "Escape") setEditingCell(null);
@@ -647,6 +655,34 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           onSelectAll={() => setSelectedRows(new Set(data.map((_, i) => i)))}
           onDeselectAll={() => setSelectedRows(new Set())}
           onClose={() => setCtxMenu(null)}
+        />
+      )}
+
+      {editCtxMenu && editingCell && (
+        <EditCellCtxMenu
+          x={editCtxMenu.x} y={editCtxMenu.y}
+          onClose={() => setEditCtxMenu(null)}
+          onCopy={() => navigator.clipboard.writeText(editingCell.value ?? "")}
+          onCut={() => {
+            navigator.clipboard.writeText(editingCell.value ?? "");
+            setEditingCell((prev) => prev ? { ...prev, value: "" } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          onPaste={async () => {
+            const text = await navigator.clipboard.readText();
+            setEditingCell((prev) => prev ? { ...prev, value: text } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          onSetNull={() => {
+            setEditingCell((prev) => prev ? { ...prev, value: null } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          hasDefault={columnDefaults[editingCell.col] !== undefined && columnDefaults[editingCell.col] !== null}
+          onSetDefault={() => {
+            const def = columnDefaults[editingCell.col];
+            setEditingCell((prev) => prev ? { ...prev, value: def ?? null } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
         />
       )}
     </div>

@@ -387,6 +387,7 @@ export default function App() {
                     databases={store.activeConnections.get(tab.connectionId)?.databases ?? []}
                     dbType={store.activeConnections.get(tab.connectionId)?.config.db_type ?? "mysql"}
                     schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
+                    dbColumns={store.activeConnections.get(tab.connectionId)?.dbColumns ?? {}}
                     isDark={isDark}
                     onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}

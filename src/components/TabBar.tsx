@@ -203,8 +203,7 @@ export default function TabBar({
               setCtxMenu({ x: e.clientX, y: e.clientY, tabId: tab.id });
             }}
             className={[
-              "flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg flex-shrink-0 group select-none",
-              "cursor-grab active:cursor-grabbing",
+              "flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg flex-shrink-0 group select-none cursor-default",
               isDragging
                 ? "opacity-40 scale-95 ring-1 ring-highlight/40"
                 : "transition-colors",

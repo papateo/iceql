@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import SqlEditor from "./SqlEditor";
 import ResultsPanel from "./ResultsPanel";
-import type { QueryResult } from "../types";
+import type { ColumnInfo, QueryResult } from "../types";
 import { parseEditableTable, injectCtid, CTID_ALIAS } from "../utils/sql";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   databases: string[];
   dbType: string;
   schema: Record<string, string[]>;
+  dbColumns: Record<string, ColumnInfo[]>;
   isDark: boolean;
   onLoadSchema: () => void;
   onDatabaseChange: (db: string) => void;
@@ -23,7 +24,7 @@ interface Props {
 }
 
 export default function QueryView({
-  query, database, databases, dbType, schema, isDark,
+  query, database, databases, dbType, schema, dbColumns, isDark,
   onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
 }: Props) {
@@ -53,6 +54,16 @@ export default function QueryView({
     }
     return canonical;
   }, [result, lastRunQuery, schema]);
+
+  // Schema default values for editableTable, for "Set Default" in the edit-cell context menu.
+  const columnDefaults = useMemo(() => {
+    if (!editableTable) return {};
+    const cols = dbColumns[`${database}.${editableTable}`];
+    if (!cols) return {};
+    const map: Record<string, string | null> = {};
+    cols.forEach((c) => { map[c.name] = c.column_default; });
+    return map;
+  }, [dbColumns, database, editableTable]);
 
   useEffect(() => {
     if (database) onLoadSchema();
@@ -220,6 +231,7 @@ export default function QueryView({
           dbType={dbType}
           database={database}
           rowIds={rowIds}
+          columnDefaults={columnDefaults}
           onCommit={handleCommit}
         />
       </div>
