@@ -60,16 +60,23 @@ export function buildUpdateStatements(
       sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ctid = ${sqlLiteral(ctid)}`);
       return;
     }
-    // Use primary key columns for WHERE if available — more reliable than all-column match
-    // (avoids float precision issues and long text comparisons).
-    const whereCols = primaryKeys && primaryKeys.length > 0 ? primaryKeys : columns;
+    // Use primary key columns for WHERE if available — more reliable than all-column match.
+    // For MySQL tables without PK metadata, avoid strict `IS NULL` full-row matching because
+    // driver/type conversions can surface default non-null DB values as null in the client row,
+    // which causes false 0-row matches.
+    const hasPrimaryKeys = Boolean(primaryKeys && primaryKeys.length > 0);
+    const whereCols = hasPrimaryKeys ? primaryKeys! : columns;
     const whereClauses = whereCols
-      .map((col) => {
+      .flatMap((col) => {
         const v = original[col];
-        return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;
+        if (v === null || v === undefined) {
+          return !hasPrimaryKeys && dbType === "mysql" ? [] : [`${qi(col)} IS NULL`];
+        }
+        return [`${qi(col)} = ${sqlLiteral(v)}`];
       })
       .join(" AND ");
-    sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${whereClauses}${limitClause}`);
+    const where = whereClauses || "1=1";
+    sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${where}${limitClause}`);
   });
   return sqls;
 }
@@ -87,21 +94,26 @@ export function buildDeleteStatements(
 ): string[] {
   const qi = (name: string) => quoteIdent(dbType, name);
   const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
-  // Use primary key columns for WHERE if available — more reliable than all-column match
-  // (a single stale/mismatched column would otherwise make the whole match fail).
-  const whereCols = primaryKeys && primaryKeys.length > 0 ? primaryKeys : columns;
+  // Use primary key columns for WHERE if available — more reliable than all-column match.
+  // Same MySQL fallback logic as UPDATE when PK metadata is unavailable.
+  const hasPrimaryKeys = Boolean(primaryKeys && primaryKeys.length > 0);
+  const whereCols = hasPrimaryKeys ? primaryKeys! : columns;
   return selectedIndices.map((rowIdx) => {
     const row = rows[rowIdx];
     const ctid = rowIds?.[rowIdx];
     if (ctid) {
       return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ctid = ${sqlLiteral(ctid)}`;
     }
-    const where = whereCols
-      .map((col) => {
+    const whereClauses = whereCols
+      .flatMap((col) => {
         const v = row[col];
-        return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;
+        if (v === null || v === undefined) {
+          return !hasPrimaryKeys && dbType === "mysql" ? [] : [`${qi(col)} IS NULL`];
+        }
+        return [`${qi(col)} = ${sqlLiteral(v)}`];
       })
       .join(" AND ");
+    const where = whereClauses || "1=1";
     return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ${where}${limitClause}`;
   });
 }
