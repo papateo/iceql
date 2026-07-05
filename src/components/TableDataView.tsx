@@ -368,7 +368,7 @@ export default function TableDataView({
     if (!ac || selectedRows.size === 0) return;
     const dbType = ac.config.db_type;
     const indices = [...selectedRows].sort((a, b) => a - b);
-    const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices);
+    const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices, undefined, primaryKeys);
     setDeleting(true);
     setError(null);
     try {

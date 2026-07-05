@@ -393,6 +393,7 @@ export default function App() {
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
                     onRunQuery={(q) => store.executeQuery(tab.connectionId, tab.database, q)}
+                    onGetPrimaryKeys={(table) => store.getPrimaryKeys(tab.connectionId, tab.database, table)}
                     onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
                     onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}
                     onCommitTransaction={(txId) => store.commitTransaction(txId)}

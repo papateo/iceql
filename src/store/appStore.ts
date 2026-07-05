@@ -704,6 +704,25 @@ export function useAppStore() {
 
   const clearLogs = useCallback(() => setQueryLogs([]), []);
 
+  // Used by the Query tab to build reliable UPDATE/DELETE WHERE clauses (primary key match
+  // instead of an all-column match, which breaks the moment any other column goes stale).
+  const getPrimaryKeys = useCallback(
+    async (configId: string, database: string, table: string): Promise<string[]> => {
+      const ac = activeConnections.get(configId);
+      if (!ac) return [];
+      try {
+        return await invoke<string[]>("get_primary_keys", {
+          connectionId: ac.connectionId,
+          database,
+          table,
+        });
+      } catch {
+        return [];
+      }
+    },
+    [activeConnections]
+  );
+
   const beginTransaction = useCallback(
     async (configId: string, database: string): Promise<string> => {
       const ac = activeConnections.get(configId);
@@ -774,6 +793,7 @@ export function useAppStore() {
     updateTabQuery,
     updateTabDatabase,
     executeQuery,
+    getPrimaryKeys,
     beginTransaction,
     executeInTransaction,
     commitTransaction,

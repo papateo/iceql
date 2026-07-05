@@ -82,17 +82,21 @@ export function buildDeleteStatements(
   columns: string[],
   rows: Record<string, unknown>[],
   selectedIndices: number[],
-  rowIds?: (string | null)[]
+  rowIds?: (string | null)[],
+  primaryKeys?: string[]
 ): string[] {
   const qi = (name: string) => quoteIdent(dbType, name);
   const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
+  // Use primary key columns for WHERE if available — more reliable than all-column match
+  // (a single stale/mismatched column would otherwise make the whole match fail).
+  const whereCols = primaryKeys && primaryKeys.length > 0 ? primaryKeys : columns;
   return selectedIndices.map((rowIdx) => {
     const row = rows[rowIdx];
     const ctid = rowIds?.[rowIdx];
     if (ctid) {
       return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ctid = ${sqlLiteral(ctid)}`;
     }
-    const where = columns
+    const where = whereCols
       .map((col) => {
         const v = row[col];
         return v === null || v === undefined ? `${qi(col)} IS NULL` : `${qi(col)} = ${sqlLiteral(v)}`;

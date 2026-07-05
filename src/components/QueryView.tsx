@@ -17,6 +17,7 @@ interface Props {
   onDatabaseChange: (db: string) => void;
   onQueryChange: (q: string) => void;
   onRunQuery: (q: string) => Promise<QueryResult>;
+  onGetPrimaryKeys: (table: string) => Promise<string[]>;
   onBeginTransaction: (database: string) => Promise<string>;
   onExecuteInTransaction: (txId: string, query: string) => Promise<QueryResult>;
   onCommitTransaction: (txId: string) => Promise<QueryResult>;
@@ -25,7 +26,7 @@ interface Props {
 
 export default function QueryView({
   query, database, databases, dbType, schema, dbColumns, isDark,
-  onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery,
+  onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onGetPrimaryKeys,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
 }: Props) {
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -33,6 +34,7 @@ export default function QueryView({
   const [loading, setLoading] = useState(false);
   const [lastRunQuery, setLastRunQuery] = useState("");
   const [rowIds, setRowIds] = useState<string[] | null>(null);
+  const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
   const [editorHeight, setEditorHeight] = useState(240);
   const [dragging, setDragging] = useState(false);
 
@@ -54,6 +56,16 @@ export default function QueryView({
     }
     return canonical;
   }, [result, lastRunQuery, schema]);
+
+  // Fetch the primary key for editableTable so edits build a reliable `WHERE pk = ...` clause
+  // instead of matching on every column (which breaks the moment any other column goes stale —
+  // e.g. another user editing the same row concurrently).
+  useEffect(() => {
+    if (!editableTable) { setPrimaryKeys([]); return; }
+    let cancelled = false;
+    onGetPrimaryKeys(editableTable).then((pks) => { if (!cancelled) setPrimaryKeys(pks); });
+    return () => { cancelled = true; };
+  }, [editableTable, onGetPrimaryKeys]);
 
   // Schema default values for editableTable, for "Set Default" in the edit-cell context menu.
   const columnDefaults = useMemo(() => {
@@ -116,7 +128,12 @@ export default function QueryView({
   const handleCommit = async (sqls: string[]): Promise<number> => {
     let affected = 0;
     for (const sql of sqls) {
-      const res = await onRunQuery(sql);
+      // While a transaction is active, grid edits (Save/Delete) join it instead of
+      // autocommitting immediately — same connection the SQL editor's Run uses, so a
+      // Rollback undoes them too.
+      const res = inTransaction && transactionId
+        ? await onExecuteInTransaction(transactionId, sql)
+        : await onRunQuery(sql);
       affected += res.row_count ?? 0;
     }
     if (lastRunQuery) await runQuery(lastRunQuery);
@@ -231,6 +248,7 @@ export default function QueryView({
           dbType={dbType}
           database={database}
           rowIds={rowIds}
+          primaryKeys={primaryKeys}
           columnDefaults={columnDefaults}
           onCommit={handleCommit}
         />

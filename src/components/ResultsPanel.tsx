@@ -17,6 +17,9 @@ interface Props {
   dbType: string;
   database: string;
   rowIds: string[] | null;
+  // Primary key column(s) of editableTable — used to build a reliable UPDATE/DELETE WHERE
+  // clause. Falls back to matching every column when empty (e.g. table has no primary key).
+  primaryKeys: string[];
   // Schema default value per column of `editableTable`, for "Set Default" in the edit-cell
   // context menu. Empty when editableTable is unset or its schema hasn't loaded yet.
   columnDefaults: Record<string, string | null>;
@@ -47,7 +50,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, columnDefaults, onCommit }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -55,6 +58,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [commitError, setCommitError] = useState<string | null>(null);
   const [commitNotice, setCommitNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewCopied, setPreviewCopied] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [editCtxMenu, setEditCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -312,7 +316,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const handleDelete = async () => {
     if (!editableTable || selectedRows.size === 0) return;
     const indices = [...selectedRows].sort((a, b) => a - b);
-    const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined);
+    const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined, primaryKeys);
     setDeleting(true);
     setCommitError(null);
     setCommitNotice(null);
@@ -331,7 +335,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const handleCommit = async () => {
     if (!editableTable || !hasEdits) return;
-    const sqls = buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined);
+    const sqls = buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys);
     setCommitting(true);
     setCommitError(null);
     setCommitNotice(null);
@@ -584,17 +588,33 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                 <Eye size={14} className="text-highlight" />
                 Query preview — {edits.size} statement{edits.size === 1 ? "" : "s"}
               </div>
-              <button
-                onClick={() => setShowPreview(false)}
-                className="p-1 rounded hover:bg-accent text-text-muted hover:text-text-primary"
-              >
-                <X size={14} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
+                        .map((sql) => formatSql(sql) + ";")
+                        .join("\n\n")
+                    );
+                    setPreviewCopied(true);
+                    setTimeout(() => setPreviewCopied(false), 1500);
+                  }}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${previewCopied ? "text-green-400" : "text-text-muted hover:text-text-primary hover:bg-accent"}`}
+                >
+                  {previewCopied ? <><Check size={12} /> Copied</> : "Copy"}
+                </button>
+                <button
+                  onClick={() => setShowPreview(false)}
+                  className="p-1 rounded hover:bg-accent text-text-muted hover:text-text-primary"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-auto p-4">
               <div className="bg-bg border border-border rounded p-2.5">
                 <SqlPreview
-                  value={buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined)
+                  value={buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
                     .map((sql) => formatSql(sql) + ";")
                     .join("\n\n")}
                 />
