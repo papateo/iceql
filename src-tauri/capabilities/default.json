@@ -19,6 +19,7 @@
     "fs:scope-home-recursive",
     "dialog:default",
     "dialog:allow-save",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "clipboard-manager:allow-read-text"
   ]
 }

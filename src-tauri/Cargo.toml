@@ -43,6 +43,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
 tauri-plugin-dialog = "2.7.1"
+tauri-plugin-clipboard-manager = "2"
 
 [features]
 default = ["custom-protocol"]

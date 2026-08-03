@@ -13,7 +13,7 @@ interface Props {
 
 const DEFAULTS: Record<DbType, Partial<ConnectionConfig>> = {
   postgresql: { host: "localhost", port: 5432, username: "postgres", database: "postgres" },
-  mysql: { host: "localhost", port: 3306, username: "root", database: "" },
+  mysql: { host: "localhost", port: 3306, username: "root", database: "mysql" },
   sqlite: { host: "", port: 0, username: "", database: "" },
   csv: { host: "", port: 0, username: "", database: "", filename: "" },
 };
@@ -260,7 +260,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
                   className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
                   value={form.database}
                   onChange={(e) => set("database", e.target.value)}
-                  placeholder="postgres"
+                  placeholder={DEFAULTS[form.db_type].database}
                 />
               </div>
             </>

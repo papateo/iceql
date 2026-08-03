@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard } from "lucide-react";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import ContextMenu from "./components/ContextMenu";
@@ -476,9 +477,21 @@ export default function App() {
                 label: "Paste",
                 icon: <Clipboard size={12} />,
                 disabled: isReadOnly,
-                onClick: () => {
+                onClick: async () => {
+                  const text = await readText();
+                  if (!text) return;
                   el.focus();
-                  document.execCommand("paste");
+                  const start = el.selectionStart ?? el.value.length;
+                  const end = el.selectionEnd ?? el.value.length;
+                  const nextValue = el.value.slice(0, start) + text + el.value.slice(end);
+                  const setter = Object.getOwnPropertyDescriptor(
+                    el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                    "value"
+                  )?.set;
+                  setter?.call(el, nextValue);
+                  el.dispatchEvent(new Event("input", { bubbles: true }));
+                  const caret = start + text.length;
+                  requestAnimationFrame(() => el.setSelectionRange(caret, caret));
                 },
               },
               { separator: true },
