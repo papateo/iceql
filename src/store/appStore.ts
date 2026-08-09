@@ -211,6 +211,27 @@ export function useAppStore() {
     [savedConnections]
   );
 
+  // Imports connections from an external source (e.g. a JSON file), assigning fresh
+  // ids and de-duplicating names against what's already saved so nothing collides.
+  const importConnections = useCallback(
+    async (configs: ConnectionConfig[]) => {
+      const existingNames = new Set(savedConnections.map((c) => c.name));
+      const imported = configs.map((c) => {
+        const base = c.name || "Imported connection";
+        let name = base;
+        let i = 2;
+        while (existingNames.has(name)) name = `${base} (${i++})`;
+        existingNames.add(name);
+        return { ...c, id: uuidv4(), name };
+      });
+      const updated = [...savedConnections, ...imported];
+      setSavedConnections(updated);
+      await saveConnections(updated);
+      return imported;
+    },
+    [savedConnections]
+  );
+
   const connectDemoDb = useCallback(async () => {
     if (activeConnections.has("iceql-demo")) {
       setSelectedConnectionId("iceql-demo");
@@ -776,6 +797,7 @@ export function useAppStore() {
     addConnection,
     updateConnection,
     deleteConnection,
+    importConnections,
     connectDemoDb,
     connectToDb,
     disconnectFromDb,

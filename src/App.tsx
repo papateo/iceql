@@ -515,6 +515,7 @@ export default function App() {
           onAdd={store.addConnection}
           onUpdate={store.updateConnection}
           onDelete={store.deleteConnection}
+          onImport={store.importConnections}
           onSelectDataSource={store.selectDataSource}
           onConnectDemo={store.connectDemoDb}
           onClose={() => setShowConnManager(false)}
