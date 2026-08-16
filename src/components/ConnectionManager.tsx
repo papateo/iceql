@@ -4,8 +4,9 @@ import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { Plus, Plug, PlugZap, Edit2, Trash2, Database, X, FlaskConical, Download, Upload } from "lucide-react";
 import type { ConnectionConfig, ActiveConnection, DbType } from "../types";
 import AddConnectionModal from "./AddConnectionModal";
+import DbLogo from "./DbLogo";
 
-const VALID_DB_TYPES: DbType[] = ["postgresql", "mysql", "sqlite", "csv"];
+const VALID_DB_TYPES: DbType[] = ["postgresql", "mysql", "sqlite", "csv", "mongodb"];
 
 interface Props {
   savedConnections: ConnectionConfig[];
@@ -51,13 +52,6 @@ function parseImportedConnections(raw: string): ConnectionConfig[] {
     } as ConnectionConfig));
 }
 
-const dbColor = (t: string) =>
-  t === "postgresql" ? "text-blue-400"
-  : t === "mysql" ? "text-orange-400"
-  : t === "sqlite" ? "text-green-400"
-  : t === "mongodb" ? "text-emerald-500"
-  : t === "csv" ? "text-yellow-400"
-  : "text-text-secondary";
 
 export default function ConnectionManager({
   savedConnections,
@@ -233,7 +227,7 @@ export default function ConnectionManager({
                 const isConnecting = connectingIds.has(conn.id);
                 return (
                   <div key={conn.id} className="group flex items-center gap-2 px-4 py-2 hover:bg-accent/50">
-                    <Database size={16} className={`${dbColor(conn.db_type)} flex-shrink-0`} />
+                    <DbLogo type={conn.db_type} size={16} className="flex-shrink-0" />
                     <button
                       onClick={() => { if (isConnected) { onSelectDataSource(conn.id); onClose(); } else if (!isConnecting) onConnect(conn); }}
                       className="flex items-center gap-2 flex-1 min-w-0 text-left"

@@ -12,6 +12,7 @@ import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./s
 import type { ActiveConnection } from "./types";
 import SettingsModal, { type AppSettings } from "./components/SettingsModal";
 import EditTableModal, { type EditTableTarget } from "./components/EditTableModal";
+import DbLogo from "./components/DbLogo";
 
 // Build a CodeMirror SQL schema ({ table: [columns] }) from the cached metadata of a connection.
 function buildSqlSchema(
@@ -182,27 +183,6 @@ export default function App() {
     window.addEventListener("mouseup", onUp);
   };
 
-  const dsColor = (t: string) =>
-    t === "postgresql" ? "text-blue-400"
-    : t === "mysql" ? "text-orange-400"
-    : t === "sqlite" ? "text-green-400"
-    : t === "csv" ? "text-yellow-400"
-    : "text-text-secondary";
-
-  const dsBadgeLabel = (t: string) =>
-    t === "postgresql" ? "PG"
-    : t === "mysql" ? "MY"
-    : t === "sqlite" ? "SL"
-    : t === "csv" ? "CSV"
-    : "DB";
-
-  const dsBadgeClass = (t: string) =>
-    t === "postgresql" ? "bg-blue-500 text-white"
-    : t === "mysql" ? "bg-orange-500 text-white"
-    : t === "sqlite" ? "bg-green-600 text-white"
-    : t === "csv" ? "bg-yellow-500 text-black"
-    : "bg-border text-text-muted";
-
   return (
     <div className="flex h-screen bg-bg text-text-primary overflow-hidden">
       {/* Data source rail — one icon per connected data source, each with its own tabs */}
@@ -219,12 +199,7 @@ export default function App() {
                 title={c.name}
                 className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
               >
-                <div className="relative">
-                  <Database size={17} className={dsColor(c.db_type)} />
-                  <span className={`absolute -bottom-1 -right-1.5 text-[7px] font-bold leading-none px-0.5 py-px rounded ${dsBadgeClass(c.db_type)}`}>
-                    {dsBadgeLabel(c.db_type)}
-                  </span>
-                </div>
+                <DbLogo type={c.db_type} size={19} />
               </button>
             );
           })}

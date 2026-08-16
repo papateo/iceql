@@ -37,6 +37,7 @@ function savePinned(items: PinnedTable[]) {
 }
 import type { ConnectionConfig, ActiveConnection } from "../types";
 import ContextMenu, { type ContextMenuEntry } from "./ContextMenu";
+import DbLogo from "./DbLogo";
 
 interface Props {
   savedConnections: ConnectionConfig[];
@@ -57,16 +58,6 @@ interface CtxState {
   y: number;
   items: ContextMenuEntry[];
 }
-
-const dbTypeIcon = (type: string) => {
-  const colors: Record<string, string> = {
-    postgresql: "text-blue-400",
-    mysql: "text-orange-400",
-    sqlite: "text-green-400",
-    mongodb: "text-emerald-500",
-  };
-  return colors[type] ?? "text-text-secondary";
-};
 
 export default function ConnectionsPanel({
   savedConnections,
@@ -156,7 +147,7 @@ export default function ConnectionsPanel({
         className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0 cursor-context-menu"
         onContextMenu={(e) => connMenuItems.length > 0 && openCtx(e, connMenuItems)}
       >
-        <Database size={15} className={dbTypeIcon(activeConn.db_type)} />
+        <DbLogo type={activeConn.db_type} size={15} />
         <span className="text-sm font-semibold text-text-primary truncate flex-1">{activeConn.name}</span>
         {ac && <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="Connected" />}
       </div>

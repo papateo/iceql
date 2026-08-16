@@ -2,8 +2,9 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { v4 as uuidv4 } from "uuid";
-import { X, Database, Loader2, FolderOpen, FileText } from "lucide-react";
+import { X, Loader2, FolderOpen, FileText } from "lucide-react";
 import type { ConnectionConfig, DbType } from "../types";
+import DbLogo from "./DbLogo";
 
 interface Props {
   initial?: ConnectionConfig;
@@ -121,7 +122,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
       <div className="bg-sidebar border border-border rounded-xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2 text-text-primary font-semibold text-lg">
-            <Database size={20} className="text-highlight" />
+            <DbLogo type={form.db_type} size={20} />
             {initial ? "Edit Connection" : "New Connection"}
           </div>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
