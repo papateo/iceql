@@ -241,6 +241,7 @@ export default function QueryView({
             database={database}
             databases={databases}
             schema={schema}
+            isDark={isDark}
             onDatabaseChange={onDatabaseChange}
           />
         ) : (

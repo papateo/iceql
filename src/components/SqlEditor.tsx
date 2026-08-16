@@ -30,7 +30,7 @@ interface Props {
   onRollbackTransaction: () => void;
 }
 
-const lightTheme = createTheme({
+export const lightTheme = createTheme({
   theme: "light",
   settings: {
     background: "#f0f4f8",
@@ -106,7 +106,7 @@ function makeColumnCompletion(schema: Record<string, string[]>) {
   };
 }
 
-const customTheme = EditorView.theme({
+export const customTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent !important",
     height: "100%",

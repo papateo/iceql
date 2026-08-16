@@ -17,6 +17,8 @@ import {
   Columns3,
   Copy,
   Eye,
+  Table2,
+  Braces,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -59,6 +61,63 @@ function CellValue({ value }: { value: unknown }) {
     <span className="truncate block max-w-[320px]" title={str}>
       {str}
     </span>
+  );
+}
+
+// Lightweight regex-based JSON syntax highlighter for the Mongo JSON view — cheap enough to
+// run per document without mounting a full editor instance for each one. Input is escaped for
+// HTML first, so only fixed, non-user-controlled class names ever end up inside the markup.
+// Exported so ResultsPanel's Mongo query-result JSON view can reuse it without duplicating.
+export function highlightJson(value: unknown): string {
+  const json = JSON.stringify(value, null, 2) ?? "";
+  const escaped = json.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return escaped.replace(
+    /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (match) => {
+      let cls = "text-amber-400"; // number
+      if (match.startsWith('"')) {
+        cls = match.endsWith(":") ? "text-sky-300" : "text-green-400"; // key vs string value
+      } else if (match === "true" || match === "false") {
+        cls = "text-purple-400";
+      } else if (match === "null") {
+        cls = "text-text-muted italic";
+      }
+      return `<span class="${cls}">${match}</span>`;
+    }
+  );
+}
+
+export function JsonDocCard({
+  doc, index, selected, onToggleSelect,
+}: {
+  doc: Record<string, unknown>;
+  index: number;
+  selected: boolean;
+  onToggleSelect: (e: React.MouseEvent) => void;
+}) {
+  const html = useMemo(() => highlightJson(doc), [doc]);
+  return (
+    <div
+      onMouseDown={onToggleSelect}
+      className={`group relative rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+        selected ? "border-highlight bg-highlight/10" : "border-border hover:bg-accent/30"
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-text-muted">#{index + 1}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(doc, null, 2)); }}
+          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-highlight hover:bg-accent transition-all"
+          title="Copy document as JSON"
+        >
+          <Copy size={11} />
+        </button>
+      </div>
+      <pre
+        className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all text-text-primary"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
   );
 }
 
@@ -197,6 +256,7 @@ export default function TableDataView({
   const [showFilter, setShowFilter] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
   const [showColumns, setShowColumns] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "json">("grid");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Columns the user has chosen to display (column-visibility checklist).
@@ -717,6 +777,24 @@ export default function TableDataView({
             </>
           )}
         </div>
+        {isMongo && (
+          <div className="flex items-center bg-accent/60 border border-border rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${viewMode === "grid" ? "bg-highlight text-bg" : "text-text-muted hover:text-text-primary"}`}
+              title="Grid view"
+            >
+              <Table2 size={12} /> Grid
+            </button>
+            <button
+              onClick={() => setViewMode("json")}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${viewMode === "json" ? "bg-highlight text-bg" : "text-text-muted hover:text-text-primary"}`}
+              title="JSON view"
+            >
+              <Braces size={12} /> JSON
+            </button>
+          </div>
+        )}
         <div className="flex-1" />
         {!hasEdits && totalCount > 0 && (
           <span className="text-text-muted text-xs">
@@ -785,6 +863,22 @@ export default function TableDataView({
           <div className="flex items-center justify-center h-full text-text-muted gap-2">
             <Loader2 size={16} className="animate-spin" />
             <span className="text-sm">Loading…</span>
+          </div>
+        ) : isMongo && viewMode === "json" ? (
+          <div className="flex flex-col gap-2 p-3">
+            {displayedRows.map((row) => {
+              const rowIdx = row.__idx;
+              const doc = Object.fromEntries(visibleColumns.map((c) => [c, row[c]]));
+              return (
+                <JsonDocCard
+                  key={rowIdx}
+                  doc={doc}
+                  index={rowIdx}
+                  selected={selectedRows.has(rowIdx)}
+                  onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
+                />
+              );
+            })}
           </div>
         ) : (
           <div className="text-xs" style={{ width: totalWidth, minWidth: "100%" }}>

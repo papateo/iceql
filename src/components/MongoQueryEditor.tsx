@@ -1,5 +1,14 @@
-import { useMemo } from "react";
-import { Play, Loader2, Database, Square, Layers } from "lucide-react";
+import { useRef, useCallback, useMemo, useState } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
+import { dracula } from "@uiw/codemirror-theme-dracula";
+import { EditorView, keymap } from "@codemirror/view";
+import { Prec } from "@codemirror/state";
+import { autocompletion, type CompletionContext, type CompletionResult, type Completion } from "@codemirror/autocomplete";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { Play, Loader2, Database, Square, Layers, Scissors, Copy, Clipboard } from "lucide-react";
+import ContextMenu from "./ContextMenu";
+import { lightTheme, customTheme } from "./SqlEditor";
 
 interface Props {
   value: string;
@@ -10,6 +19,7 @@ interface Props {
   database: string;
   databases: string[];
   schema: Record<string, string[]>;
+  isDark: boolean;
   onDatabaseChange: (db: string) => void;
 }
 
@@ -28,14 +38,48 @@ function parseCollection(text: string): string {
   }
 }
 
+const SPEC_KEYS = ["collection", "filter", "sort", "limit"];
+const MONGO_OPERATORS = [
+  "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin",
+  "$and", "$or", "$nor", "$not",
+  "$exists", "$type", "$regex", "$mod", "$all", "$elemMatch", "$size",
+  "$text", "$expr", "$oid", "$date",
+];
+
+// Completions inside JSON string literals: field names of the selected collection and
+// Mongo query operators everywhere, plus the top-level spec keys near the outer object.
+function makeMongoCompletion(fields: string[]) {
+  return (context: CompletionContext): CompletionResult | null => {
+    const word = context.matchBefore(/"[\w$]*/);
+    if (!word) return null;
+    if (word.from === word.to && !context.explicit) return null;
+
+    const before = context.state.doc.sliceString(0, word.from);
+    const opens = (before.match(/[{[]/g) ?? []).length;
+    const closes = (before.match(/[}\]]/g) ?? []).length;
+    const depth = opens - closes;
+
+    const options: Completion[] = [];
+    if (depth <= 1) {
+      SPEC_KEYS.forEach((k) => options.push({ label: k, type: "keyword", boost: 12 }));
+    }
+    fields.forEach((f) => options.push({ label: f, type: "property", boost: depth > 1 ? 10 : 4 }));
+    MONGO_OPERATORS.forEach((op) => options.push({ label: op, type: "function", boost: depth > 1 ? 8 : 2 }));
+
+    return { from: word.from + 1, options, filter: true };
+  };
+}
+
 const selectClass =
   "appearance-none bg-accent/60 border border-border rounded-lg text-xs text-text-secondary pl-7 pr-6 py-1.5 outline-none focus:border-highlight hover:bg-accent transition-colors cursor-pointer";
 
 export default function MongoQueryEditor({
-  value, onChange, onRun, running, onCancel, database, databases, schema, onDatabaseChange,
+  value, onChange, onRun, running, onCancel, database, databases, schema, isDark, onDatabaseChange,
 }: Props) {
+  const editorRef = useRef<{ view?: EditorView } | null>(null);
   const collections = useMemo(() => Object.keys(schema), [schema]);
   const currentCollection = parseCollection(value);
+  const fields = useMemo(() => schema[currentCollection] ?? [], [schema, currentCollection]);
 
   const handleCollectionChange = (name: string) => {
     try {
@@ -46,10 +90,72 @@ export default function MongoQueryEditor({
     }
   };
 
-  const handleRun = () => {
+  const handleRun = useCallback(() => {
     const text = value.trim() || defaultSpec(collections[0] ?? "");
     onRun(text);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, collections]);
+
+  const runExtension = useMemo(
+    () => Prec.highest(keymap.of([{ key: "Mod-Enter", run: () => { handleRun(); return true; } }])),
+    [handleRun]
+  );
+
+  const extensions = useMemo(
+    () => [json(), autocompletion({ override: [makeMongoCompletion(fields)] }), customTheme, runExtension],
+    [fields, runExtension]
+  );
+
+  // Right-click menu for the editor's contenteditable surface — same reasoning as SqlEditor:
+  // the browser's own context menu is disabled app-wide, and CodeMirror isn't an
+  // <input>/<textarea> that the global handler in App.tsx already covers.
+  const [editCtx, setEditCtx] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
+  const getView = useCallback(() => (editorRef.current as unknown as { view?: EditorView })?.view, []);
+
+  const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const view = getView();
+    const hasSelection = !!view && !view.state.selection.main.empty;
+    setEditCtx({ x: e.clientX, y: e.clientY, hasSelection });
+  }, [getView]);
+
+  const cutSelection = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    const sel = view.state.selection.main;
+    if (sel.empty) return;
+    navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to));
+    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: "" } });
+    view.focus();
+  }, [getView]);
+
+  const copySelection = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    const sel = view.state.selection.main;
+    if (sel.empty) return;
+    navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to));
+  }, [getView]);
+
+  const pasteClipboard = useCallback(async () => {
+    const view = getView();
+    if (!view) return;
+    const text = await readText();
+    if (!text) return;
+    const sel = view.state.selection.main;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: text },
+      selection: { anchor: sel.from + text.length },
+    });
+    view.focus();
+  }, [getView]);
+
+  const selectAll = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+    view.focus();
+  }, [getView]);
 
   return (
     <div className="flex flex-col h-full">
@@ -105,21 +211,42 @@ export default function MongoQueryEditor({
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <textarea
+      <div className="flex-1 overflow-hidden" onContextMenu={handleEditorContextMenu}>
+        <CodeMirror
+          ref={editorRef as never}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              e.preventDefault();
-              handleRun();
-            }
-          }}
-          spellCheck={false}
+          onChange={onChange}
+          theme={isDark ? dracula : lightTheme}
+          extensions={extensions}
+          style={{ height: "100%" }}
           placeholder={defaultSpec(collections[0] ?? "your_collection")}
-          className="w-full h-full resize-none bg-transparent outline-none p-3 font-mono text-xs leading-relaxed text-text-primary placeholder:text-text-muted/60"
+          basicSetup={{
+            lineNumbers: true,
+            highlightActiveLine: true,
+            highlightActiveLineGutter: true,
+            foldGutter: true,
+            autocompletion: true,
+            bracketMatching: true,
+            closeBrackets: true,
+            indentOnInput: true,
+          }}
         />
       </div>
+
+      {editCtx && (
+        <ContextMenu
+          x={editCtx.x}
+          y={editCtx.y}
+          onClose={() => setEditCtx(null)}
+          items={[
+            { label: "Cut", icon: <Scissors size={12} />, disabled: !editCtx.hasSelection, onClick: cutSelection },
+            { label: "Copy", icon: <Copy size={12} />, disabled: !editCtx.hasSelection, onClick: copySelection },
+            { label: "Paste", icon: <Clipboard size={12} />, onClick: pasteClipboard },
+            { separator: true },
+            { label: "Select All", onClick: selectAll },
+          ]}
+        />
+      )}
     </div>
   );
 }

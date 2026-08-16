@@ -1,12 +1,13 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Table2, Braces } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
 import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
 import SqlPreview from "./SqlPreview";
 import EditCellCtxMenu from "./EditCellCtxMenu";
+import { JsonDocCard } from "./TableDataView";
 
 interface Props {
   result: QueryResult | null;
@@ -66,6 +67,8 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [colWidthOverrides, setColWidthOverrides] = useState<Map<string, number>>(new Map());
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [viewMode, setViewMode] = useState<"grid" | "json">("grid");
+  const isMongo = dbType === "mongodb";
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastClickedRow = useRef<number | null>(null);
@@ -418,6 +421,25 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           <span className="text-highlight text-xs">{selectedRows.size} / {data.length} selected</span>
         )}
 
+        {isMongo && (
+          <div className="flex items-center bg-accent/60 border border-border rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${viewMode === "grid" ? "bg-highlight text-bg" : "text-text-muted hover:text-text-primary"}`}
+              title="Grid view"
+            >
+              <Table2 size={12} /> Grid
+            </button>
+            <button
+              onClick={() => setViewMode("json")}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${viewMode === "json" ? "bg-highlight text-bg" : "text-text-muted hover:text-text-primary"}`}
+              title="JSON view"
+            >
+              <Braces size={12} /> JSON
+            </button>
+          </div>
+        )}
+
         <div className="flex-1" />
 
         {commitError && (
@@ -476,6 +498,19 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
       {/* Table */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
+        {isMongo && viewMode === "json" ? (
+          <div className="flex flex-col gap-2 p-3">
+            {sortedIndices.map((rowIdx) => (
+              <JsonDocCard
+                key={rowIdx}
+                doc={data[rowIdx]}
+                index={rowIdx}
+                selected={selectedRows.has(rowIdx)}
+                onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
+              />
+            ))}
+          </div>
+        ) : (
         <div className="text-xs" style={{ width: totalWidth, minWidth: "100%" }}>
           <div className="flex sticky top-0 z-10 bg-accent border-b border-border">
             <div
@@ -569,6 +604,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
             })}
           </div>
         </div>
+        )}
 
         {data.length === 0 && (
           <div className="flex items-center justify-center py-8 text-text-muted text-sm">
