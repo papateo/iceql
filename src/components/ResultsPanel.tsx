@@ -7,7 +7,7 @@ import type { QueryResult } from "../types";
 import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
 import SqlPreview from "./SqlPreview";
 import EditCellCtxMenu from "./EditCellCtxMenu";
-import { JsonDocCard } from "./TableDataView";
+import { JsonDocCard, stringifyCellValue } from "./TableDataView";
 
 interface Props {
   result: QueryResult | null;
@@ -292,7 +292,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
     const current = edits.has(editKey) ? edits.get(editKey) : data[rowIdx][col];
-    setEditingCell({ rowIdx, col, value: current === null || current === undefined ? null : String(current) });
+    setEditingCell({ rowIdx, col, value: current === null || current === undefined ? null : stringifyCellValue(current) });
   };
 
   const commitCellEdit = () => {
@@ -301,7 +301,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     const editKey = `${rowIdx}:${col}`;
     const original = data[rowIdx][col];
     const isOriginalNull = original === null || original === undefined;
-    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === String(original));
+    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === stringifyCellValue(original));
     setEdits((prev) => {
       const next = new Map(prev);
       if (noChange) next.delete(editKey);

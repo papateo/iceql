@@ -53,6 +53,13 @@ const CELL_MAX_W = 320;
 const CELL_PAD = 28;
 const RESIZE_MIN_W = 50;
 
+// Object/array cell values (Mongo documents, Postgres JSON/JSONB columns) must round-trip
+// through the edit box as their JSON text, not `String(v)` — which gives "[object Object]"
+// and makes every such cell look "changed" the moment it's opened and blurred, even
+// untouched. Exported so ResultsPanel's edit flow uses the exact same rule.
+export const stringifyCellValue = (v: unknown): string =>
+  typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+
 function CellValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
     return <span className="text-text-muted italic">NULL</span>;
@@ -147,6 +154,7 @@ export default function TableDataView({
 
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
   const [showSqlPreview, setShowSqlPreview] = useState(false);
+  const [previewCopied, setPreviewCopied] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [cellSel, setCellSel] = useState<{ r1: number; c1: number; r2: number; c2: number } | null>(null);
   const isCellDragging = useRef(false);
@@ -381,8 +389,6 @@ export default function TableDataView({
   // is disallowed rather than silently failing on commit.
   const isCellEditable = (col: string) => !(isMongo && col === "_id");
 
-  const stringifyCellValue = (v: unknown): string => (typeof v === "object" && v !== null ? JSON.stringify(v) : String(v));
-
   const startEdit = (rowIdx: number, col: string) => {
     if (!isCellEditable(col)) return;
     if (selectedRows.size > 0) setSelectedRows(new Set());
@@ -402,7 +408,7 @@ export default function TableDataView({
     const editKey = `${rowIdx}:${col}`;
     const original = rows[rowIdx]?.[col];
     const isOriginalNull = original === null || original === undefined;
-    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === String(original));
+    const noChange = value === null ? isOriginalNull : (!isOriginalNull && value === stringifyCellValue(original));
     if (noChange) {
       setEdits((prev) => { const n = new Map(prev); n.delete(editKey); return n; });
     } else {
@@ -415,6 +421,25 @@ export default function TableDataView({
 
   const buildUpdateSQL = (): string[] =>
     buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
+
+  // Preview text for the Mongo commit modal: one updateOne per changed document, grouping all
+  // of that document's pending field edits into a single $set so the user sees exactly what
+  // will change per row (mirrors how the SQL preview groups a row's edits into one UPDATE).
+  const buildMongoUpdatePreview = (): string[] => {
+    const byRow = new Map<number, Record<string, unknown>>();
+    edits.forEach((value, key) => {
+      const sepIdx = key.indexOf(":");
+      const rowIdx = Number(key.slice(0, sepIdx));
+      const col = key.slice(sepIdx + 1);
+      if (!byRow.has(rowIdx)) byRow.set(rowIdx, {});
+      byRow.get(rowIdx)![col] = value;
+    });
+    return [...byRow.entries()].map(([rowIdx, changes]) => {
+      const idJson = JSON.stringify(rows[rowIdx]?.["_id"]);
+      const setJson = JSON.stringify(changes, null, 2).replace(/\n/g, "\n  ");
+      return `db.${table}.updateOne(\n  { _id: ${idJson} },\n  { $set: ${setJson} }\n);`;
+    });
+  };
 
   // Mongo documents have no WHERE-by-column story — every edit is a single updateOne
   // matched by _id, sent field by field through a dedicated command instead of SQL text.
@@ -837,11 +862,9 @@ export default function TableDataView({
             <button onClick={revertAll} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors">
               <RotateCcw size={12} /> Revert
             </button>
-            {!isMongo && (
-              <button onClick={() => setShowSqlPreview(true)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors" title="Preview SQL">
-                <Eye size={12} />
-              </button>
-            )}
+            <button onClick={() => setShowSqlPreview(true)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors" title={isMongo ? "Preview changes" : "Preview SQL"}>
+              <Eye size={12} />
+            </button>
             <button onClick={commitAll} disabled={loading} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-highlight text-bg hover:bg-highlight/90 transition-colors disabled:opacity-50">
               {loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Commit
             </button>
@@ -1175,20 +1198,25 @@ export default function TableDataView({
             <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Eye size={14} className="text-highlight" />
-                <span className="text-sm font-semibold text-text-primary">Preview SQL</span>
+                <span className="text-sm font-semibold text-text-primary">{isMongo ? "Preview changes" : "Preview SQL"}</span>
+                <span className="text-text-muted text-xs">— {edits.size} change{edits.size > 1 ? "s" : ""}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => navigator.clipboard.writeText(buildUpdateSQL().join(";\n"))}
-                  className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-accent transition-colors"
+                  onClick={() => {
+                    navigator.clipboard.writeText((isMongo ? buildMongoUpdatePreview() : buildUpdateSQL()).join(isMongo ? "\n\n" : ";\n"));
+                    setPreviewCopied(true);
+                    setTimeout(() => setPreviewCopied(false), 1500);
+                  }}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${previewCopied ? "text-green-400" : "text-text-muted hover:text-text-primary hover:bg-accent"}`}
                 >
-                  Copy
+                  {previewCopied ? <><Check size={12} /> Copied</> : "Copy"}
                 </button>
                 <button onClick={() => setShowSqlPreview(false)} className="text-text-muted hover:text-text-primary transition-colors"><X size={14} /></button>
               </div>
             </div>
             <pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
-              {buildUpdateSQL().join(";\n\n")}
+              {isMongo ? buildMongoUpdatePreview().join("\n\n") : buildUpdateSQL().join(";\n\n")}
             </pre>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-border flex-shrink-0">
               <button onClick={() => setShowSqlPreview(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Close</button>
