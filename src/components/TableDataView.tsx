@@ -25,6 +25,7 @@ import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import * as XLSX from "xlsx";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
+import { buildMongoUpdatePreview } from "../utils/mongo";
 import EditCellCtxMenu from "./EditCellCtxMenu";
 
 interface Props {
@@ -422,24 +423,7 @@ export default function TableDataView({
   const buildUpdateSQL = (): string[] =>
     buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
 
-  // Preview text for the Mongo commit modal: one updateOne per changed document, grouping all
-  // of that document's pending field edits into a single $set so the user sees exactly what
-  // will change per row (mirrors how the SQL preview groups a row's edits into one UPDATE).
-  const buildMongoUpdatePreview = (): string[] => {
-    const byRow = new Map<number, Record<string, unknown>>();
-    edits.forEach((value, key) => {
-      const sepIdx = key.indexOf(":");
-      const rowIdx = Number(key.slice(0, sepIdx));
-      const col = key.slice(sepIdx + 1);
-      if (!byRow.has(rowIdx)) byRow.set(rowIdx, {});
-      byRow.get(rowIdx)![col] = value;
-    });
-    return [...byRow.entries()].map(([rowIdx, changes]) => {
-      const idJson = JSON.stringify(rows[rowIdx]?.["_id"]);
-      const setJson = JSON.stringify(changes, null, 2).replace(/\n/g, "\n  ");
-      return `db.${table}.updateOne(\n  { _id: ${idJson} },\n  { $set: ${setJson} }\n);`;
-    });
-  };
+  const buildMongoPreview = (): string[] => buildMongoUpdatePreview(table, rows, edits);
 
   // Mongo documents have no WHERE-by-column story — every edit is a single updateOne
   // matched by _id, sent field by field through a dedicated command instead of SQL text.
@@ -1204,7 +1188,7 @@ export default function TableDataView({
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText((isMongo ? buildMongoUpdatePreview() : buildUpdateSQL()).join(isMongo ? "\n\n" : ";\n"));
+                    navigator.clipboard.writeText((isMongo ? buildMongoPreview() : buildUpdateSQL()).join(isMongo ? "\n\n" : ";\n"));
                     setPreviewCopied(true);
                     setTimeout(() => setPreviewCopied(false), 1500);
                   }}
@@ -1216,7 +1200,7 @@ export default function TableDataView({
               </div>
             </div>
             <pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
-              {isMongo ? buildMongoUpdatePreview().join("\n\n") : buildUpdateSQL().join(";\n\n")}
+              {isMongo ? buildMongoPreview().join("\n\n") : buildUpdateSQL().join(";\n\n")}
             </pre>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-border flex-shrink-0">
               <button onClick={() => setShowSqlPreview(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Close</button>

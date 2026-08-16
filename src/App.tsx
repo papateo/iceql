@@ -396,6 +396,8 @@ export default function App() {
                     onRunQuery={(q, queryId) => store.executeQuery(tab.connectionId, tab.database, q, queryId)}
                     onCancelQuery={(queryId) => store.cancelQuery(queryId)}
                     onGetPrimaryKeys={(table) => store.getPrimaryKeys(tab.connectionId, tab.database, table)}
+                    onMongoUpdate={(collection, idJson, field, valueJson) => store.mongoUpdateField(tab.connectionId, tab.database, collection, idJson, field, valueJson)}
+                    onMongoDelete={(collection, idJsons) => store.mongoDeleteDocuments(tab.connectionId, tab.database, collection, idJsons)}
                     onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
                     onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}
                     onCommitTransaction={(txId) => store.commitTransaction(txId)}

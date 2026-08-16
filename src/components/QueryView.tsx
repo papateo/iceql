@@ -5,6 +5,7 @@ import MongoQueryEditor from "./MongoQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
 import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase } from "../utils/sql";
+import { parseMongoCollection } from "../utils/mongo";
 
 interface Props {
   tabId: string;
@@ -21,6 +22,8 @@ interface Props {
   onRunQuery: (q: string, queryId: string) => Promise<QueryResult>;
   onCancelQuery: (queryId: string) => void;
   onGetPrimaryKeys: (table: string) => Promise<string[]>;
+  onMongoUpdate: (collection: string, idJson: string, field: string, valueJson: string) => Promise<void>;
+  onMongoDelete: (collection: string, idJsons: string[]) => Promise<number>;
   onBeginTransaction: (database: string) => Promise<string>;
   onExecuteInTransaction: (txId: string, query: string) => Promise<QueryResult>;
   onCommitTransaction: (txId: string) => Promise<QueryResult>;
@@ -30,6 +33,7 @@ interface Props {
 export default function QueryView({
   query, database, databases, dbType, schema, dbColumns, isDark,
   onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onCancelQuery, onGetPrimaryKeys,
+  onMongoUpdate, onMongoDelete,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
 }: Props) {
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -51,6 +55,16 @@ export default function QueryView({
 
   const editableTable = useMemo(() => {
     if (!result || !lastRunQuery) return null;
+
+    if (dbType === "mongodb") {
+      // Mongo results are editable whenever the query targeted a real collection and the
+      // result carries _id (always true for our query spec, which never drops it) — there's
+      // no relational "does every selected column belong to one table" check to make here.
+      const token = parseMongoCollection(lastRunQuery);
+      if (!token || !result.columns.includes("_id")) return null;
+      return Object.keys(schema).find((t) => t.toLowerCase() === token.toLowerCase()) ?? token;
+    }
+
     const token = parseEditableTable(lastRunQuery);
     if (!token) return null;
     const canonical = Object.keys(schema).find((t) => t.toLowerCase() === token);
@@ -61,7 +75,7 @@ export default function QueryView({
       if (!result.columns.every((c) => colSet.has(c.toLowerCase()))) return null;
     }
     return canonical;
-  }, [result, lastRunQuery, schema]);
+  }, [result, lastRunQuery, schema, dbType]);
 
   // Fetch the primary key for editableTable so edits build a reliable `WHERE pk = ...` clause
   // instead of matching on every column (which breaks the moment any other column goes stale —
@@ -162,6 +176,12 @@ export default function QueryView({
     }
     if (lastRunQuery) await runQuery(lastRunQuery);
     return affected;
+  };
+
+  // Mongo edits (ResultsPanel) go straight through onMongoUpdate/onMongoDelete rather than
+  // handleCommit's SQL loop — this is the equivalent "refresh after the batch of edits" step.
+  const handleMongoRefresh = async () => {
+    if (lastRunQuery) await runQuery(lastRunQuery);
   };
 
   const handleToggleTransaction = async () => {
@@ -291,6 +311,9 @@ export default function QueryView({
           primaryKeys={primaryKeys}
           columnDefaults={columnDefaults}
           onCommit={handleCommit}
+          onMongoUpdate={onMongoUpdate}
+          onMongoDelete={onMongoDelete}
+          onMongoRefresh={handleMongoRefresh}
         />
       </div>
     </div>

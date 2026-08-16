@@ -732,6 +732,39 @@ export function useAppStore() {
     }
   }, []);
 
+  // Mongo documents have no SQL to run — edits go through these dedicated commands (matched
+  // by _id) instead of executeQuery. Used by both the collection browse view and the Mongo
+  // query tab's editable results.
+  const mongoUpdateField = useCallback(
+    async (configId: string, database: string, collection: string, idJson: string, field: string, valueJson: string) => {
+      const ac = activeConnections.get(configId);
+      if (!ac) throw new Error("Not connected");
+      await invoke("mongo_update_field", {
+        connectionId: ac.connectionId,
+        database,
+        collection,
+        idJson,
+        field,
+        valueJson,
+      });
+    },
+    [activeConnections]
+  );
+
+  const mongoDeleteDocuments = useCallback(
+    async (configId: string, database: string, collection: string, idJsons: string[]): Promise<number> => {
+      const ac = activeConnections.get(configId);
+      if (!ac) throw new Error("Not connected");
+      return await invoke<number>("mongo_delete_documents", {
+        connectionId: ac.connectionId,
+        database,
+        collection,
+        idJsons,
+      });
+    },
+    [activeConnections]
+  );
+
   const clearLogs = useCallback(() => setQueryLogs([]), []);
 
   // Used by the Query tab to build reliable UPDATE/DELETE WHERE clauses (primary key match
@@ -825,6 +858,8 @@ export function useAppStore() {
     updateTabDatabase,
     executeQuery,
     cancelQuery,
+    mongoUpdateField,
+    mongoDeleteDocuments,
     getPrimaryKeys,
     beginTransaction,
     executeInTransaction,

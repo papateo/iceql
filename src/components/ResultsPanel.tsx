@@ -5,6 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
 import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
+import { buildMongoUpdatePreview } from "../utils/mongo";
 import SqlPreview from "./SqlPreview";
 import EditCellCtxMenu from "./EditCellCtxMenu";
 import { JsonDocCard, stringifyCellValue } from "./TableDataView";
@@ -13,7 +14,8 @@ interface Props {
   result: QueryResult | null;
   error: string | null;
   loading: boolean;
-  // Editing support: when `editableTable` is set, rows can be edited in place.
+  // Editing support: when `editableTable` is set, rows can be edited in place. For Mongo this
+  // is the collection name (from the query's "collection" field), not a relational table.
   editableTable: string | null;
   dbType: string;
   database: string;
@@ -25,6 +27,10 @@ interface Props {
   // context menu. Empty when editableTable is unset or its schema hasn't loaded yet.
   columnDefaults: Record<string, string | null>;
   onCommit: (sqls: string[]) => Promise<number>;
+  // Mongo-only edit path — bypasses onCommit's SQL-string pipe entirely.
+  onMongoUpdate: (collection: string, idJson: string, field: string, valueJson: string) => Promise<void>;
+  onMongoDelete: (collection: string, idJsons: string[]) => Promise<number>;
+  onMongoRefresh: () => Promise<void>;
 }
 
 interface EditCell {
@@ -51,7 +57,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -288,6 +294,8 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const startEdit = (rowIdx: number, col: string) => {
     if (!editableTable) return;
+    // Mongo's _id can't be changed via update (it would need a delete + reinsert).
+    if (isMongo && col === "_id") return;
     setCommitNotice(null);
     setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
@@ -318,13 +326,21 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const handleDelete = async () => {
     if (!editableTable || selectedRows.size === 0) return;
-    const indices = [...selectedRows].sort((a, b) => a - b);
-    const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined, primaryKeys);
     setDeleting(true);
     setCommitError(null);
     setCommitNotice(null);
     try {
-      const affected = await onCommit(sqls);
+      let affected: number;
+      if (isMongo) {
+        const indices = [...selectedRows].sort((a, b) => a - b);
+        const idJsons = indices.map((i) => JSON.stringify(data[i]?.["_id"]));
+        affected = await onMongoDelete(editableTable, idJsons);
+        await onMongoRefresh();
+      } else {
+        const indices = [...selectedRows].sort((a, b) => a - b);
+        const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined, primaryKeys);
+        affected = await onCommit(sqls);
+      }
       setSelectedRows(new Set());
       setShowDeleteConfirm(false);
       setCommitNotice({ ok: true, msg: `Deleted ${affected} row${affected === 1 ? "" : "s"}` });
@@ -338,11 +354,25 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
   const handleCommit = async () => {
     if (!editableTable || !hasEdits) return;
-    const sqls = buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys);
     setCommitting(true);
     setCommitError(null);
     setCommitNotice(null);
     try {
+      if (isMongo) {
+        for (const [key, value] of edits.entries()) {
+          const sepIdx = key.indexOf(":");
+          const rowIdx = Number(key.slice(0, sepIdx));
+          const col = key.slice(sepIdx + 1);
+          const idJson = JSON.stringify(data[rowIdx]?.["_id"]);
+          const valueJson = value === null ? "null" : stringifyCellValue(value);
+          await onMongoUpdate(editableTable, idJson, col, valueJson);
+        }
+        setEdits(new Map());
+        setCommitNotice({ ok: true, msg: `Updated ${edits.size} field${edits.size > 1 ? "s" : ""}` });
+        await onMongoRefresh();
+        return;
+      }
+      const sqls = buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys);
       const affected = await onCommit(sqls);
       setEdits(new Map());
       if (affected === 0) {
@@ -622,16 +652,17 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
               <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
                 <Eye size={14} className="text-highlight" />
-                Query preview — {edits.size} statement{edits.size === 1 ? "" : "s"}
+                {isMongo ? "Preview changes" : "Query preview"} — {edits.size} {isMongo ? "change" : "statement"}{edits.size === 1 ? "" : "s"}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(
-                      buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
-                        .map((sql) => formatSql(sql) + ";")
-                        .join("\n\n")
-                    );
+                    const text = isMongo
+                      ? buildMongoUpdatePreview(editableTable, data, edits).join("\n\n")
+                      : buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
+                          .map((sql) => formatSql(sql) + ";")
+                          .join("\n\n");
+                    navigator.clipboard.writeText(text);
                     setPreviewCopied(true);
                     setTimeout(() => setPreviewCopied(false), 1500);
                   }}
@@ -648,13 +679,19 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
               </div>
             </div>
             <div className="flex-1 overflow-auto p-4">
-              <div className="bg-bg border border-border rounded p-2.5">
-                <SqlPreview
-                  value={buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
-                    .map((sql) => formatSql(sql) + ";")
-                    .join("\n\n")}
-                />
-              </div>
+              {isMongo ? (
+                <pre className="bg-bg border border-border rounded p-2.5 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
+                  {buildMongoUpdatePreview(editableTable, data, edits).join("\n\n")}
+                </pre>
+              ) : (
+                <div className="bg-bg border border-border rounded p-2.5">
+                  <SqlPreview
+                    value={buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
+                      .map((sql) => formatSql(sql) + ";")
+                      .join("\n\n")}
+                  />
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2 px-4 py-2.5 border-t border-border">
               <button
