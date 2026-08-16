@@ -379,6 +379,7 @@ export default function App() {
                     onPageSizeChange={(size) => updateTableSetting(tab.id, { pageSize: size })}
                     infiniteScroll={tableSettings[tab.id]?.infiniteScroll ?? false}
                     onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
+                    isDark={isDark}
                   />
                 ) : (
                   <QueryView

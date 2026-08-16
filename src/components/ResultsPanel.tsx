@@ -31,6 +31,7 @@ interface Props {
   onMongoUpdate: (collection: string, idJson: string, field: string, valueJson: string) => Promise<void>;
   onMongoDelete: (collection: string, idJsons: string[]) => Promise<number>;
   onMongoRefresh: () => Promise<void>;
+  isDark: boolean;
 }
 
 interface EditCell {
@@ -57,7 +58,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh, isDark }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -324,6 +325,24 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     return edits.has(editKey) ? edits.get(editKey) : data[rowIdx][col];
   };
 
+  const rowHasEdits = (rowIdx: number) => {
+    const prefix = `${rowIdx}:`;
+    for (const key of edits.keys()) if (key.startsWith(prefix)) return true;
+    return false;
+  };
+
+  // JSON view's per-document edit diff lands here — same `edits` map Grid mode uses, so Save,
+  // Preview, and Discard all work identically either way.
+  const applyJsonFieldEdits = (rowIdx: number, changes: Record<string, unknown>) => {
+    setEdits((prev) => {
+      const next = new Map(prev);
+      for (const [field, value] of Object.entries(changes)) {
+        next.set(`${rowIdx}:${field}`, stringifyCellValue(value));
+      }
+      return next;
+    });
+  };
+
   const handleDelete = async () => {
     if (!editableTable || selectedRows.size === 0) return;
     setDeleting(true);
@@ -536,6 +555,10 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                 doc={data[rowIdx]}
                 index={rowIdx}
                 selected={selectedRows.has(rowIdx)}
+                edited={rowHasEdits(rowIdx)}
+                editable={!!editableTable}
+                isDark={isDark}
+                onFieldsChange={applyJsonFieldEdits}
                 onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
               />
             ))}

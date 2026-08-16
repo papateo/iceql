@@ -19,14 +19,28 @@ import {
   Eye,
   Table2,
   Braces,
+  PenLine,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import * as XLSX from "xlsx";
+import CodeMirror from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
+import { dracula } from "@uiw/codemirror-theme-dracula";
+import { EditorView } from "@codemirror/view";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
 import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
 import { buildMongoUpdatePreview } from "../utils/mongo";
 import EditCellCtxMenu from "./EditCellCtxMenu";
+import { lightTheme } from "./SqlEditor";
+
+// Transparent background + compact font, sized by content (via CodeMirror's maxHeight prop)
+// rather than filling its parent — unlike SqlEditor's customTheme, which forces height:100%
+// for its own fixed-height layout and would collapse this auto-sizing card to nothing.
+const jsonCardTheme = EditorView.theme({
+  "&": { backgroundColor: "transparent !important", fontSize: "11px" },
+  ".cm-scroller": { fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", lineHeight: "1.6" },
+});
 
 interface Props {
   configId: string;
@@ -38,6 +52,7 @@ interface Props {
   onPageSizeChange: (size: number) => void;
   infiniteScroll: boolean;
   onInfiniteScrollChange: (value: boolean) => void;
+  isDark: boolean;
 }
 
 interface EditCell {
@@ -60,6 +75,17 @@ const RESIZE_MIN_W = 50;
 // untouched. Exported so ResultsPanel's edit flow uses the exact same rule.
 export const stringifyCellValue = (v: unknown): string =>
   typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+
+// Used by JsonDocCard's live "removed fields" hint while the user is mid-edit — parse
+// failures just mean "can't tell yet," not an error worth surfacing here.
+function tryParse(text: string): Record<string, unknown> | null {
+  try {
+    const v = JSON.parse(text);
+    return typeof v === "object" && v !== null && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 function CellValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
@@ -96,35 +122,151 @@ export function highlightJson(value: unknown): string {
 }
 
 export function JsonDocCard({
-  doc, index, selected, onToggleSelect,
+  doc, index, selected, edited, onToggleSelect, editable, onFieldsChange, isDark,
 }: {
   doc: Record<string, unknown>;
   index: number;
   selected: boolean;
+  // Whether this document has any pending (uncommitted) field edits — drawn from the same
+  // `edits` map Grid mode uses, so the two views stay visually consistent.
+  edited?: boolean;
   onToggleSelect: (e: React.MouseEvent) => void;
+  // When set, a pencil button lets the user edit the document's JSON directly. Saving diffs
+  // the parsed object against `doc` and reports only the changed/added top-level fields —
+  // removed fields are not detected as deletions (no $unset support yet).
+  editable?: boolean;
+  onFieldsChange?: (rowIdx: number, changes: Record<string, unknown>) => void;
+  isDark?: boolean;
 }) {
   const html = useMemo(() => highlightJson(doc), [doc]);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(() => JSON.stringify(doc, null, 2));
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) setText(JSON.stringify(doc, null, 2));
+  }, [doc, editing]);
+
+  const startEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setText(JSON.stringify(doc, null, 2));
+    setParseError(null);
+    setEditing(true);
+  };
+
+  const cancelEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setText(JSON.stringify(doc, null, 2));
+    setParseError(null);
+    setEditing(false);
+  };
+
+  const applyEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : "Invalid JSON");
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      setParseError("Must be a JSON object");
+      return;
+    }
+    const changes: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (key === "_id") continue; // _id can't be changed via update
+      if (JSON.stringify(value) !== JSON.stringify(doc[key])) changes[key] = value;
+    }
+    if (Object.keys(changes).length > 0) onFieldsChange?.(index, changes);
+    setParseError(null);
+    setEditing(false);
+  };
+
+  const removedFields = editing
+    ? Object.keys(doc).filter((k) => k !== "_id" && !(k in (tryParse(text) ?? {})))
+    : [];
+
   return (
     <div
-      onMouseDown={onToggleSelect}
-      className={`group relative rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
-        selected ? "border-highlight bg-highlight/10" : "border-border hover:bg-accent/30"
+      onMouseDown={editing ? undefined : onToggleSelect}
+      onDoubleClick={editable && !editing ? startEditing : undefined}
+      className={`group relative rounded-lg border px-3 py-2.5 transition-colors ${editing ? "cursor-default" : editable ? "cursor-text" : "cursor-pointer"} ${
+        selected ? "border-highlight bg-highlight/10" : edited ? "border-highlight/60" : "border-border hover:bg-accent/30"
       }`}
     >
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] text-text-muted">#{index + 1}</span>
-        <button
-          onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(doc, null, 2)); }}
-          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-highlight hover:bg-accent transition-all"
-          title="Copy document as JSON"
-        >
-          <Copy size={11} />
-        </button>
+        <span className="text-[10px] text-text-muted flex items-center gap-1.5">
+          #{index + 1}
+          {edited && <span className="w-1.5 h-1.5 rounded-full bg-highlight" title="Has pending changes" />}
+        </span>
+        <div className="flex items-center gap-1">
+          {editing ? (
+            <>
+              <button onClick={applyEdit} className="p-0.5 rounded text-green-400 hover:bg-accent transition-colors" title="Apply changes">
+                <Check size={11} />
+              </button>
+              <button onClick={cancelEdit} className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-accent transition-colors" title="Cancel">
+                <X size={11} />
+              </button>
+            </>
+          ) : (
+            <>
+              {editable && (
+                <button
+                  onClick={startEditing}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-highlight hover:bg-accent transition-all"
+                  title="Edit document"
+                >
+                  <PenLine size={11} />
+                </button>
+              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(doc, null, 2)); }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-highlight hover:bg-accent transition-all"
+                title="Copy document as JSON"
+              >
+                <Copy size={11} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
-      <pre
-        className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all text-text-primary"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      {editing ? (
+        <>
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            className="rounded border border-highlight overflow-hidden text-[11px]"
+          >
+            <CodeMirror
+              value={text}
+              onChange={setText}
+              theme={isDark ? dracula : lightTheme}
+              extensions={[json(), jsonCardTheme]}
+              maxHeight="500px"
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                highlightActiveLine: false,
+              }}
+            />
+          </div>
+          {parseError && <p className="text-[10px] text-red-400 mt-1">{parseError}</p>}
+          {!parseError && removedFields.length > 0 && (
+            <p className="text-[10px] text-yellow-400 mt-1">
+              Removing fields isn't supported here — {removedFields.join(", ")} will stay unchanged.
+            </p>
+          )}
+        </>
+      ) : (
+        <pre
+          className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all text-text-primary"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      )}
     </div>
   );
 }
@@ -139,6 +281,7 @@ export default function TableDataView({
   onPageSizeChange,
   infiniteScroll,
   onInfiniteScrollChange,
+  isDark,
 }: Props) {
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -419,6 +562,24 @@ export default function TableDataView({
   };
 
   const revertAll = () => { setEdits(new Map()); setEditingCell(null); setError(null); };
+
+  const rowHasEdits = (rowIdx: number) => {
+    const prefix = `${rowIdx}:`;
+    for (const key of edits.keys()) if (key.startsWith(prefix)) return true;
+    return false;
+  };
+
+  // JSON view's per-document edit diff lands here — same `edits` map Grid mode uses, so Save,
+  // Preview, Discard, and the edited-cell highlight all work identically either way.
+  const applyJsonFieldEdits = (rowIdx: number, changes: Record<string, unknown>) => {
+    setEdits((prev) => {
+      const next = new Map(prev);
+      for (const [field, value] of Object.entries(changes)) {
+        next.set(`${rowIdx}:${field}`, stringifyCellValue(value));
+      }
+      return next;
+    });
+  };
 
   const buildUpdateSQL = (): string[] =>
     buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
@@ -882,6 +1043,10 @@ export default function TableDataView({
                   doc={doc}
                   index={rowIdx}
                   selected={selectedRows.has(rowIdx)}
+                  edited={rowHasEdits(rowIdx)}
+                  editable
+                  isDark={isDark}
+                  onFieldsChange={applyJsonFieldEdits}
                   onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
                 />
               );

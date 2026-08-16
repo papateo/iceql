@@ -314,6 +314,7 @@ export default function QueryView({
           onMongoUpdate={onMongoUpdate}
           onMongoDelete={onMongoDelete}
           onMongoRefresh={handleMongoRefresh}
+          isDark={isDark}
         />
       </div>
     </div>
