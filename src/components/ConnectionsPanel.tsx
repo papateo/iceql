@@ -269,7 +269,7 @@ function DatabaseNode({
   const dbMenuItems: ContextMenuEntry[] = [
     { label: "New Query", icon: <Code2 size={12} />, onClick: () => onOpenQuery(configId, dbName) },
     { label: "Refresh Tables", icon: <RefreshCw size={12} />, onClick: () => onExpandDb(configId, dbName) },
-    ...(dbType === "mongodb" ? [] : [
+    ...(dbType === "mongodb" || dbType === "redis" ? [] : [
       { separator: true } as ContextMenuEntry,
       {
         label: "Create Table",
@@ -397,17 +397,17 @@ function TableNode({
     }
   };
 
-  const isMongo = dbType === "mongodb";
+  const isDocStore = dbType === "mongodb" || dbType === "redis";
 
   const tableMenuItems: ContextMenuEntry[] = [
     { label: "View Data",      icon: <TableProperties size={12} />, onClick: () => onOpenTable(configId, dbName, table.name) },
-    ...(!isMongo ? [{ label: "Select 100 rows", icon: <Code2 size={12} />, onClick: () => q(`SELECT * FROM ${tbl} LIMIT 100;`) } as ContextMenuEntry] : []),
+    ...(!isDocStore ? [{ label: "Select 100 rows", icon: <Code2 size={12} />, onClick: () => q(`SELECT * FROM ${tbl} LIMIT 100;`) } as ContextMenuEntry] : []),
     { label: "Copy Name",      icon: <Copy size={12} />,            onClick: () => navigator.clipboard.writeText(table.name) },
     { separator: true },
     pinned
       ? { label: "Unpin Table", icon: <PinOff size={12} />, onClick: () => onUnpin(pinned.id) }
       : { label: "Pin Table",   icon: <Pin size={12} />,    onClick: () => onPin({ id: crypto.randomUUID(), configId, connectionName, dbName, tableName: table.name, dbType }) },
-    ...(!isMongo ? [
+    ...(!isDocStore ? [
       { label: "Edit Table",     icon: <PenLine size={12} />,         onClick: () => onEditTable(configId, dbName, table.name, dbType) } as ContextMenuEntry,
       { label: "Create Table",   icon: <FilePlus2 size={12} />,       onClick: () => q(`CREATE TABLE ${tbl}_copy LIKE ${tbl};`) } as ContextMenuEntry,
       { label: "Truncate Table", icon: <Eraser size={12} />,  danger: true, onClick: () => q(`TRUNCATE TABLE ${tbl};`) } as ContextMenuEntry,

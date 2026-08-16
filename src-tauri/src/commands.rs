@@ -29,7 +29,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        ConnectionPool::Mongo(_, _) => {
+        ConnectionPool::Mongo(_, _) | ConnectionPool::Redis(_, _) => {
             // connect() already pings the server, so a successful connect is enough here.
         }
     }
@@ -181,7 +181,8 @@ pub async fn begin_transaction(
             | ConnectionPool::MySQL(_, cfg)
             | ConnectionPool::SQLite(_, cfg)
             | ConnectionPool::CSV(_, cfg)
-            | ConnectionPool::Mongo(_, cfg) => cfg.clone(),
+            | ConnectionPool::Mongo(_, cfg)
+            | ConnectionPool::Redis(_, cfg) => cfg.clone(),
         }
     };
 
@@ -323,4 +324,34 @@ pub async fn mongo_delete_documents(
         .ok_or_else(|| "Connection not found".to_string())?;
     pool.mongo_delete_documents(&database, &collection, &id_jsons)
         .await
+}
+
+#[tauri::command]
+pub async fn redis_update_field(
+    connection_id: String,
+    database: String,
+    key: String,
+    field: String,
+    value_json: String,
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<(), String> {
+    let store = state.lock().await;
+    let pool = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    pool.redis_update_field(&database, &key, &field, &value_json).await
+}
+
+#[tauri::command]
+pub async fn redis_delete_keys(
+    connection_id: String,
+    database: String,
+    keys: Vec<String>,
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<u64, String> {
+    let store = state.lock().await;
+    let pool = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    pool.redis_delete_keys(&database, &keys).await
 }

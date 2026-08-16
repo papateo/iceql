@@ -76,6 +76,11 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [viewMode, setViewMode] = useState<"grid" | "json">("grid");
   const isMongo = dbType === "mongodb";
+  // Redis command results aren't uniformly document-shaped (a GET returns a scalar, HGETALL a
+  // hash, KEYS a bare list...), so editing them here isn't attempted — they only get the JSON
+  // view for easier reading. Full CRUD on Redis lives in the key-group table view instead.
+  const isRedis = dbType === "redis";
+  const isJsonViewable = isMongo || isRedis;
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastClickedRow = useRef<number | null>(null);
@@ -470,7 +475,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           <span className="text-highlight text-xs">{selectedRows.size} / {data.length} selected</span>
         )}
 
-        {isMongo && (
+        {isJsonViewable && (
           <div className="flex items-center bg-accent/60 border border-border rounded-lg p-0.5">
             <button
               onClick={() => setViewMode("grid")}
@@ -547,7 +552,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
 
       {/* Table */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
-        {isMongo && viewMode === "json" ? (
+        {isJsonViewable && viewMode === "json" ? (
           <div className="flex flex-col gap-2 p-3">
             {sortedIndices.map((rowIdx) => (
               <JsonDocCard

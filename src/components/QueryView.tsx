@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 import SqlEditor from "./SqlEditor";
 import MongoQueryEditor from "./MongoQueryEditor";
+import RedisQueryEditor from "./RedisQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
 import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase } from "../utils/sql";
@@ -261,6 +262,18 @@ export default function QueryView({
             database={database}
             databases={databases}
             schema={schema}
+            isDark={isDark}
+            onDatabaseChange={onDatabaseChange}
+          />
+        ) : dbType === "redis" ? (
+          <RedisQueryEditor
+            value={query}
+            onChange={onQueryChange}
+            onRun={runQuery}
+            running={loading}
+            onCancel={currentQueryId ? handleCancelQuery : undefined}
+            database={database}
+            databases={databases}
             isDark={isDark}
             onDatabaseChange={onDatabaseChange}
           />

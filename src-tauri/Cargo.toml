@@ -47,6 +47,7 @@ tauri-plugin-clipboard-manager = "2"
 mongodb = "3"
 bson = { version = "2", features = ["chrono-0_4"] }
 futures-util = "0.3"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
 [features]
 default = ["custom-protocol"]

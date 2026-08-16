@@ -108,6 +108,8 @@ pub fn run() {
             commands::rollback_transaction,
             commands::mongo_update_field,
             commands::mongo_delete_documents,
+            commands::redis_update_field,
+            commands::redis_delete_keys,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,6 +12,11 @@ pub enum ConnectionPool {
     SQLite(sqlx::SqlitePool, ConnectionConfig),
     CSV(sqlx::SqlitePool, ConnectionConfig),
     Mongo(mongodb::Client, ConnectionConfig),
+    // Just connection parameters — Redis has no long-lived pool here. Every operation opens
+    // its own short-lived connection scoped to the requested db index (see redis_connection),
+    // since Redis' "selected database" is per-connection state that would otherwise race
+    // across concurrently open tabs sharing one connection/db-index-agnostic client.
+    Redis(redis::Client, ConnectionConfig),
 }
 
 /// Derive the in-memory SQLite table name from the CSV file's stem.
@@ -368,6 +373,21 @@ impl ConnectionPool {
                     .map_err(|e| format!("MongoDB connection failed: {e}"))?;
                 Ok(ConnectionPool::Mongo(client, config.clone()))
             }
+            "redis" => {
+                let db = redis_db_index(config);
+                let client = redis::Client::open(redis_connection_info(config, db))
+                    .map_err(|e| format!("Redis connection failed: {e}"))?;
+                // Validate connectivity up front so a bad host/auth fails at connect time.
+                let mut conn = client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .map_err(|e| format!("Redis connection failed: {e}"))?;
+                redis::cmd("PING")
+                    .query_async::<String>(&mut conn)
+                    .await
+                    .map_err(|e| format!("Redis connection failed: {e}"))?;
+                Ok(ConnectionPool::Redis(client, config.clone()))
+            }
             other => Err(format!("Unsupported database type: {other}")),
         }
     }
@@ -415,6 +435,7 @@ impl ConnectionPool {
             }
             "csv" => Err("CSV data sources do not support transactions".to_string()),
             "mongodb" => Err("MongoDB connections do not support transactions".to_string()),
+            "redis" => Err("Redis connections do not support transactions".to_string()),
             other => Err(format!("Unsupported database type: {other}")),
         }
     }
@@ -446,6 +467,9 @@ impl ConnectionPool {
             }
             ConnectionPool::Mongo(_, _) => {
                 Err("MongoDB connections do not support transactions".to_string())
+            }
+            ConnectionPool::Redis(_, _) => {
+                Err("Redis connections do not support transactions".to_string())
             }
         }
     }
@@ -482,6 +506,14 @@ impl ConnectionPool {
             ConnectionPool::CSV(_, _) => Ok(vec!["csv".to_string()]),
             ConnectionPool::Mongo(client, _) => {
                 client.list_database_names().await.map_err(|e| e.to_string())
+            }
+            ConnectionPool::Redis(_, config) => {
+                // Redis "databases" are numbered slots (0..N), not names — CONFIG GET tells us
+                // how many the server was started with. Cluster mode and some managed Redis
+                // offerings restrict CONFIG GET or don't support SELECT at all, so fall back to
+                // just db 0 rather than failing the whole connection.
+                let count = redis_database_count(config).await.unwrap_or(1);
+                Ok((0..count).map(|i| i.to_string()).collect())
             }
         }
     }
@@ -571,6 +603,18 @@ impl ConnectionPool {
                 Ok(names
                     .into_iter()
                     .map(|name| TableInfo { name, table_type: "COLLECTION".to_string() })
+                    .collect())
+            }
+            ConnectionPool::Redis(_, config) => {
+                let db = database.parse::<i64>().unwrap_or_else(|_| redis_db_index(config));
+                let mut conn = redis_connection(config, db).await?;
+                let keys = redis_scan_keys(&mut conn, "*", REDIS_SCAN_CAP).await?;
+                let mut groups: Vec<String> = keys.iter().map(|k| redis_key_group(k)).collect();
+                groups.sort();
+                groups.dedup();
+                Ok(groups
+                    .into_iter()
+                    .map(|name| TableInfo { name, table_type: "KEYS".to_string() })
                     .collect())
             }
         }
@@ -700,6 +744,15 @@ impl ConnectionPool {
                     })
                     .collect())
             }
+            ConnectionPool::Redis(_, _) => {
+                // Synthetic schema — every key-group "table" row has this fixed shape.
+                Ok(vec![
+                    ColumnInfo { name: "key".to_string(), data_type: "string".to_string(), is_nullable: false, column_default: None },
+                    ColumnInfo { name: "type".to_string(), data_type: "string".to_string(), is_nullable: false, column_default: None },
+                    ColumnInfo { name: "ttl".to_string(), data_type: "int".to_string(), is_nullable: true, column_default: None },
+                    ColumnInfo { name: "value".to_string(), data_type: "mixed".to_string(), is_nullable: true, column_default: None },
+                ])
+            }
         }
     }
 
@@ -763,6 +816,7 @@ impl ConnectionPool {
             }
             ConnectionPool::CSV(_, _) => Ok(vec![]),
             ConnectionPool::Mongo(_, _) => Ok(vec!["_id".to_string()]),
+            ConnectionPool::Redis(_, _) => Ok(vec!["key".to_string()]),
         }
     }
 
@@ -818,6 +872,10 @@ impl ConnectionPool {
             }
             ConnectionPool::Mongo(client, _) => {
                 mongo_run_find_query(client, database, query, start).await
+            }
+            ConnectionPool::Redis(_, config) => {
+                let db = database.parse::<i64>().unwrap_or_else(|_| redis_db_index(config));
+                redis_run_command_query(config, db, query, start).await
             }
         }
     }
@@ -943,6 +1001,57 @@ impl ConnectionPool {
                 result.execution_time_ms = start.elapsed().as_millis() as u64;
                 Ok(result)
             }
+            ConnectionPool::Redis(_, config) => {
+                let start = Instant::now();
+                let db = database.parse::<i64>().unwrap_or_else(|_| redis_db_index(config));
+                let mut conn = redis_connection(config, db).await?;
+
+                // No true offset pagination over SCAN — fetch the (capped) matching key set
+                // once, sort/slice it in memory. Fine for the key counts this UI is meant for;
+                // a group with more keys than REDIS_SCAN_CAP just shows its first slice of them.
+                let mut keys = redis_group_keys(&mut conn, table, REDIS_SCAN_CAP).await?;
+                keys.sort();
+                let total = keys.len() as u64;
+
+                let mut rows_data = vec![];
+                for key in &keys {
+                    rows_data.push(redis_key_row(&mut conn, key).await?);
+                }
+
+                if let Some(col) = sort_col.filter(|c| !c.is_empty()) {
+                    let desc = sort_dir.map(|d| d.eq_ignore_ascii_case("desc")).unwrap_or(false);
+                    rows_data.sort_by(|a, b| {
+                        let ord = match col {
+                            "type" => a.1.cmp(&b.1),
+                            "ttl" => a.2.cmp(&b.2),
+                            _ => a.0.cmp(&b.0), // "key" or anything else
+                        };
+                        if desc { ord.reverse() } else { ord }
+                    });
+                }
+
+                let offset = (page * page_size).max(0) as usize;
+                let page_rows: Vec<Vec<serde_json::Value>> = rows_data
+                    .into_iter()
+                    .skip(offset)
+                    .take(page_size.max(0) as usize)
+                    .map(|(key, type_name, ttl, value)| {
+                        vec![
+                            serde_json::Value::String(key),
+                            serde_json::Value::String(type_name),
+                            serde_json::json!(ttl),
+                            value,
+                        ]
+                    })
+                    .collect();
+
+                Ok(QueryResult {
+                    columns: vec!["key".to_string(), "type".to_string(), "ttl".to_string(), "value".to_string()],
+                    row_count: total,
+                    rows: page_rows,
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                })
+            }
         }
     }
 
@@ -994,6 +1103,78 @@ impl ConnectionPool {
             .await
             .map_err(|e| e.to_string())?;
         Ok(result.deleted_count)
+    }
+
+    /// Update one of a Redis key's two editable pseudo-fields: `"ttl"` (EXPIRE/PERSIST) or
+    /// `"value"` (type-aware full replace — hash/list/set/zset are DEL'd and rewritten rather
+    /// than diffed field-by-field, since their contents aren't addressable the way a document's
+    /// fields are). The key name and type itself aren't editable, matching Mongo's `_id` rule.
+    pub async fn redis_update_field(
+        &self,
+        database: &str,
+        key: &str,
+        field: &str,
+        value_json: &str,
+    ) -> Result<(), String> {
+        let config = match self {
+            ConnectionPool::Redis(_, cfg) => cfg,
+            _ => return Err("Not a Redis connection".to_string()),
+        };
+        let db = database.parse::<i64>().unwrap_or_else(|_| redis_db_index(config));
+        let mut conn = redis_connection(config, db).await?;
+
+        match field {
+            "ttl" => {
+                let ttl: Option<i64> = serde_json::from_str(value_json).unwrap_or(None);
+                match ttl {
+                    Some(secs) if secs > 0 => {
+                        redis::cmd("EXPIRE")
+                            .arg(key)
+                            .arg(secs)
+                            .query_async::<i64>(&mut conn)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                    _ => {
+                        redis::cmd("PERSIST")
+                            .arg(key)
+                            .query_async::<i64>(&mut conn)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(())
+            }
+            "value" => {
+                let type_name: String = redis::cmd("TYPE")
+                    .arg(key)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let value: serde_json::Value =
+                    serde_json::from_str(value_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+                redis_write_value(&mut conn, key, &type_name, &value).await
+            }
+            other => Err(format!("Unknown field: {other}")),
+        }
+    }
+
+    /// Delete keys by name. Returns the number actually deleted.
+    pub async fn redis_delete_keys(&self, database: &str, keys: &[String]) -> Result<u64, String> {
+        let config = match self {
+            ConnectionPool::Redis(_, cfg) => cfg,
+            _ => return Err("Not a Redis connection".to_string()),
+        };
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        let db = database.parse::<i64>().unwrap_or_else(|_| redis_db_index(config));
+        let mut conn = redis_connection(config, db).await?;
+        redis::cmd("DEL")
+            .arg(keys)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1465,5 +1646,427 @@ async fn execute_sqlite(
         row_count: result_rows.len() as u64,
         rows: result_rows,
         execution_time_ms: elapsed,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Redis helpers
+// ---------------------------------------------------------------------------
+
+/// Cap on how many keys a SCAN-based listing (key-group tree, group contents) will collect.
+/// Keeps the sidebar tree and table-data view responsive against huge keyspaces — a group
+/// with more keys than this just shows its first slice rather than enumerating everything.
+const REDIS_SCAN_CAP: usize = 5000;
+
+/// Cap on how many elements of a single list/set/zset get fetched for display/edit.
+const REDIS_VALUE_ELEMENT_CAP: isize = 1000;
+
+/// The db index a connection defaults to — `ConnectionConfig.database` holds it as text
+/// (e.g. "0"), same field SQL dialects use for a database *name*.
+fn redis_db_index(config: &ConnectionConfig) -> i64 {
+    config.database.trim().parse::<i64>().unwrap_or(0).max(0)
+}
+
+fn redis_connection_info(config: &ConnectionConfig, db: i64) -> redis::ConnectionInfo {
+    redis::ConnectionInfo {
+        addr: redis::ConnectionAddr::Tcp(config.host.clone(), config.port),
+        redis: redis::RedisConnectionInfo {
+            db,
+            username: if config.username.is_empty() { None } else { Some(config.username.clone()) },
+            password: if config.password.is_empty() { None } else { Some(config.password.clone()) },
+            protocol: redis::ProtocolVersion::RESP2,
+        },
+    }
+}
+
+/// Opens a fresh, short-lived connection scoped to `db`. Redis' "selected database" is
+/// per-connection state, so sharing one connection across tabs pointed at different db indices
+/// would race; opening one per operation sidesteps that entirely and is cheap for Redis.
+async fn redis_connection(config: &ConnectionConfig, db: i64) -> Result<redis::aio::MultiplexedConnection, String> {
+    let client = redis::Client::open(redis_connection_info(config, db))
+        .map_err(|e| format!("Redis connection failed: {e}"))?;
+    client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| format!("Redis connection failed: {e}"))
+}
+
+/// Number of logical databases the server was started with. Cluster mode / some managed Redis
+/// offerings restrict `CONFIG GET` or don't support multiple databases at all.
+async fn redis_database_count(config: &ConnectionConfig) -> Result<i64, String> {
+    let mut conn = redis_connection(config, 0).await?;
+    let result: Vec<String> = redis::cmd("CONFIG")
+        .arg("GET")
+        .arg("databases")
+        .query_async(&mut conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    result
+        .get(1)
+        .and_then(|s| s.parse::<i64>().ok())
+        .ok_or_else(|| "Could not determine database count".to_string())
+}
+
+/// SCAN loop collecting up to `cap` keys matching `pattern`. Non-blocking (unlike KEYS), the
+/// conventional way to enumerate a Redis keyspace.
+async fn redis_scan_keys(
+    conn: &mut redis::aio::MultiplexedConnection,
+    pattern: &str,
+    cap: usize,
+) -> Result<Vec<String>, String> {
+    let mut cursor: u64 = 0;
+    let mut keys = Vec::new();
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern)
+            .arg("COUNT")
+            .arg(1000)
+            .query_async(conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        keys.extend(batch);
+        cursor = next_cursor;
+        if cursor == 0 || keys.len() >= cap {
+            break;
+        }
+    }
+    keys.truncate(cap);
+    Ok(keys)
+}
+
+/// The pseudo-"table" a key belongs to: everything before its first `:` (a near-universal
+/// Redis namespacing convention), or the whole key when there's no colon.
+fn redis_key_group(key: &str) -> String {
+    match key.find(':') {
+        Some(idx) if idx > 0 => key[..idx].to_string(),
+        _ => key.to_string(),
+    }
+}
+
+/// All keys belonging to one group: an exact match on the group name itself (a bare key with
+/// no colon, grouped under its own full name) plus everything under the `group:*` prefix.
+async fn redis_group_keys(
+    conn: &mut redis::aio::MultiplexedConnection,
+    group: &str,
+    cap: usize,
+) -> Result<Vec<String>, String> {
+    let mut keys: Vec<String> = Vec::new();
+    let exists: i64 = redis::cmd("EXISTS")
+        .arg(group)
+        .query_async(conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    if exists > 0 {
+        keys.push(group.to_string());
+    }
+    let prefixed = redis_scan_keys(conn, &format!("{group}:*"), cap).await?;
+    for k in prefixed {
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    keys.truncate(cap);
+    Ok(keys)
+}
+
+/// Fetch a key's value, shaped for display/edit by its Redis type. Hash → JSON object;
+/// list/set → JSON array of strings; zset → JSON array of `{member, score}` (the same shape
+/// `redis_write_value` expects back on save, so display and edit round-trip losslessly).
+async fn redis_fetch_value(
+    conn: &mut redis::aio::MultiplexedConnection,
+    key: &str,
+    type_name: &str,
+) -> Result<serde_json::Value, String> {
+    match type_name {
+        "string" => {
+            let v: Option<String> = redis::cmd("GET").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            Ok(v.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null))
+        }
+        "hash" => {
+            let v: std::collections::HashMap<String, String> = redis::cmd("HGETALL")
+                .arg(key)
+                .query_async(conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(v).unwrap_or(serde_json::Value::Object(Default::default())))
+        }
+        "list" => {
+            let v: Vec<String> = redis::cmd("LRANGE")
+                .arg(key)
+                .arg(0)
+                .arg(REDIS_VALUE_ELEMENT_CAP - 1)
+                .query_async(conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Array(v.into_iter().map(serde_json::Value::String).collect()))
+        }
+        "set" => {
+            let v: Vec<String> = redis::cmd("SMEMBERS").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Array(v.into_iter().map(serde_json::Value::String).collect()))
+        }
+        "zset" => {
+            let flat: Vec<String> = redis::cmd("ZRANGE")
+                .arg(key)
+                .arg(0)
+                .arg(REDIS_VALUE_ELEMENT_CAP - 1)
+                .arg("WITHSCORES")
+                .query_async(conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            let pairs: Vec<serde_json::Value> = flat
+                .chunks(2)
+                .filter(|c| c.len() == 2)
+                .map(|c| serde_json::json!({ "member": c[0], "score": c[1].parse::<f64>().unwrap_or(0.0) }))
+                .collect();
+            Ok(serde_json::Value::Array(pairs))
+        }
+        "none" => Ok(serde_json::Value::Null),
+        other => Ok(serde_json::Value::String(format!("(unsupported type: {other})"))),
+    }
+}
+
+/// One row of a key-group listing: (key, type, ttl seconds, value).
+async fn redis_key_row(
+    conn: &mut redis::aio::MultiplexedConnection,
+    key: &str,
+) -> Result<(String, String, i64, serde_json::Value), String> {
+    let type_name: String = redis::cmd("TYPE").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+    let ttl: i64 = redis::cmd("TTL").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+    let value = redis_fetch_value(conn, key, &type_name).await?;
+    Ok((key.to_string(), type_name, ttl, value))
+}
+
+/// A JSON scalar as the raw string Redis stores for list/set members and hash field values.
+fn json_scalar_to_redis_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Parse a zset edit value: either `[{"member": "...", "score": n}, ...]` or `{"member": n}`.
+fn redis_parse_zset_value(value: &serde_json::Value) -> Result<Vec<(String, f64)>, String> {
+    if let Some(arr) = value.as_array() {
+        arr.iter()
+            .map(|item| {
+                let member = item
+                    .get("member")
+                    .and_then(|m| m.as_str())
+                    .ok_or_else(|| "Each zset entry needs a \"member\" string".to_string())?;
+                let score = item
+                    .get("score")
+                    .and_then(|s| s.as_f64())
+                    .ok_or_else(|| "Each zset entry needs a numeric \"score\"".to_string())?;
+                Ok((member.to_string(), score))
+            })
+            .collect()
+    } else if let Some(obj) = value.as_object() {
+        obj.iter()
+            .map(|(member, score)| {
+                let score = score
+                    .as_f64()
+                    .ok_or_else(|| format!("Score for \"{member}\" must be a number"))?;
+                Ok((member.clone(), score))
+            })
+            .collect()
+    } else {
+        Err("Expected a JSON array of {member, score} or an object of member: score".to_string())
+    }
+}
+
+/// Write a JSON value into a key with type-aware full-replace semantics. Hash/list/set/zset are
+/// DEL'd and rewritten (their contents aren't addressable field-by-field the way a document's
+/// are), preserving the key's existing TTL across the DEL since that would otherwise clear it —
+/// strings use `SET ... KEEPTTL` instead, needing no extra round-trip.
+async fn redis_write_value(
+    conn: &mut redis::aio::MultiplexedConnection,
+    key: &str,
+    type_name: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    match type_name {
+        "string" | "none" => {
+            let s = json_scalar_to_redis_string(value);
+            redis::cmd("SET")
+                .arg(key)
+                .arg(s)
+                .arg("KEEPTTL")
+                .query_async::<redis::Value>(conn)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        "hash" => {
+            let obj = value
+                .as_object()
+                .ok_or_else(|| "Expected a JSON object for a hash value".to_string())?;
+            let ttl: i64 = redis::cmd("TTL").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            redis::cmd("DEL").arg(key).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            if !obj.is_empty() {
+                let mut cmd = redis::cmd("HSET");
+                cmd.arg(key);
+                for (k, v) in obj {
+                    cmd.arg(k).arg(json_scalar_to_redis_string(v));
+                }
+                cmd.query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+            if ttl > 0 {
+                redis::cmd("EXPIRE").arg(key).arg(ttl).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+        }
+        "list" => {
+            let arr = value
+                .as_array()
+                .ok_or_else(|| "Expected a JSON array for a list value".to_string())?;
+            let ttl: i64 = redis::cmd("TTL").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            redis::cmd("DEL").arg(key).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            if !arr.is_empty() {
+                let mut cmd = redis::cmd("RPUSH");
+                cmd.arg(key);
+                for v in arr {
+                    cmd.arg(json_scalar_to_redis_string(v));
+                }
+                cmd.query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+            if ttl > 0 {
+                redis::cmd("EXPIRE").arg(key).arg(ttl).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+        }
+        "set" => {
+            let arr = value
+                .as_array()
+                .ok_or_else(|| "Expected a JSON array for a set value".to_string())?;
+            let ttl: i64 = redis::cmd("TTL").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            redis::cmd("DEL").arg(key).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            if !arr.is_empty() {
+                let mut cmd = redis::cmd("SADD");
+                cmd.arg(key);
+                for v in arr {
+                    cmd.arg(json_scalar_to_redis_string(v));
+                }
+                cmd.query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+            if ttl > 0 {
+                redis::cmd("EXPIRE").arg(key).arg(ttl).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+        }
+        "zset" => {
+            let pairs = redis_parse_zset_value(value)?;
+            let ttl: i64 = redis::cmd("TTL").arg(key).query_async(conn).await.map_err(|e| e.to_string())?;
+            redis::cmd("DEL").arg(key).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            if !pairs.is_empty() {
+                let mut cmd = redis::cmd("ZADD");
+                cmd.arg(key);
+                for (member, score) in &pairs {
+                    cmd.arg(score).arg(member);
+                }
+                cmd.query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+            if ttl > 0 {
+                redis::cmd("EXPIRE").arg(key).arg(ttl).query_async::<i64>(conn).await.map_err(|e| e.to_string())?;
+            }
+        }
+        other => return Err(format!("Editing a Redis '{other}' key isn't supported yet")),
+    }
+    Ok(())
+}
+
+/// Split one command line into arguments the way a shell (or redis-cli) would — respecting
+/// single/double-quoted segments so values containing spaces can be passed as one argument.
+fn redis_tokenize(line: &str) -> Vec<String> {
+    let mut tokens = vec![];
+    let mut current = String::new();
+    let mut in_quotes: Option<char> = None;
+    for c in line.chars() {
+        match in_quotes {
+            Some(q) if c == q => in_quotes = None,
+            Some(_) => current.push(c),
+            None => match c {
+                '"' | '\'' => in_quotes = Some(c),
+                c if c.is_whitespace() => {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                _ => current.push(c),
+            },
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// Convert an arbitrary Redis command reply into JSON for display in the query tab's results.
+fn redis_value_to_json(v: &redis::Value) -> serde_json::Value {
+    match v {
+        redis::Value::Nil => serde_json::Value::Null,
+        redis::Value::Int(i) => serde_json::json!(i),
+        redis::Value::BulkString(bytes) => serde_json::Value::String(String::from_utf8_lossy(bytes).to_string()),
+        redis::Value::Array(items) | redis::Value::Set(items) => {
+            serde_json::Value::Array(items.iter().map(redis_value_to_json).collect())
+        }
+        redis::Value::Map(pairs) => {
+            let obj: serde_json::Map<String, serde_json::Value> = pairs
+                .iter()
+                .map(|(k, v)| {
+                    let key = match redis_value_to_json(k) {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    (key, redis_value_to_json(v))
+                })
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        redis::Value::SimpleString(s) => serde_json::Value::String(s.clone()),
+        redis::Value::Okay => serde_json::Value::String("OK".to_string()),
+        redis::Value::Double(d) => serde_json::json!(d),
+        redis::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        redis::Value::BigNumber(n) => serde_json::Value::String(n.to_string()),
+        redis::Value::VerbatimString { text, .. } => serde_json::Value::String(text.clone()),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// The Redis "query tab" has no structured spec like Mongo's — each non-empty line of the
+/// editor is run as its own raw Redis command (redis-cli-style), and every command's reply
+/// becomes one result row alongside the command text that produced it.
+async fn redis_run_command_query(
+    config: &ConnectionConfig,
+    db: i64,
+    query: &str,
+    start: Instant,
+) -> Result<QueryResult, String> {
+    let mut conn = redis_connection(config, db).await?;
+    let mut rows = vec![];
+    for line in query.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let tokens = redis_tokenize(line);
+        if tokens.is_empty() {
+            continue;
+        }
+        let mut cmd = redis::cmd(&tokens[0]);
+        for arg in &tokens[1..] {
+            cmd.arg(arg);
+        }
+        let result: Result<redis::Value, redis::RedisError> = cmd.query_async(&mut conn).await;
+        let value_json = match result {
+            Ok(v) => redis_value_to_json(&v),
+            Err(e) => serde_json::Value::String(format!("ERROR: {e}")),
+        };
+        rows.push(vec![serde_json::Value::String(line.to_string()), value_json]);
+    }
+    Ok(QueryResult {
+        columns: vec!["command".to_string(), "result".to_string()],
+        row_count: rows.len() as u64,
+        rows,
+        execution_time_ms: start.elapsed().as_millis() as u64,
     })
 }
