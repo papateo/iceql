@@ -11,6 +11,10 @@ use db::ConnectionPool;
 
 pub type ConnectionStore = Arc<Mutex<HashMap<String, ConnectionPool>>>;
 
+// Tracks the abort handle for each in-flight query, keyed by the frontend-generated
+// query id, so a running query can be cancelled from a separate command invocation.
+pub type QueryTaskStore = Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>;
+
 pub struct TransactionStore(pub Arc<Mutex<HashMap<String, ConnectionPool>>>);
 
 impl TransactionStore {
@@ -23,6 +27,7 @@ impl TransactionStore {
 pub fn run() {
     let connection_store: ConnectionStore = Arc::new(Mutex::new(HashMap::new()));
     let transaction_store = TransactionStore::new();
+    let query_task_store: QueryTaskStore = Arc::new(Mutex::new(HashMap::new()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -31,6 +36,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(connection_store)
         .manage(transaction_store)
+        .manage(query_task_store)
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -92,6 +98,7 @@ pub fn run() {
             commands::get_columns,
             commands::get_primary_keys,
             commands::execute_query,
+            commands::cancel_query,
             commands::get_table_data,
             commands::load_connections,
             commands::save_connections,
@@ -99,6 +106,8 @@ pub fn run() {
             commands::execute_in_transaction,
             commands::commit_transaction,
             commands::rollback_transaction,
+            commands::mongo_update_field,
+            commands::mongo_delete_documents,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

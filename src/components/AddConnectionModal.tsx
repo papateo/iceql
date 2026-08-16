@@ -16,6 +16,7 @@ const DEFAULTS: Record<DbType, Partial<ConnectionConfig>> = {
   mysql: { host: "localhost", port: 3306, username: "root", database: "mysql" },
   sqlite: { host: "", port: 0, username: "", database: "" },
   csv: { host: "", port: 0, username: "", database: "", filename: "" },
+  mongodb: { host: "localhost", port: 27017, username: "", database: "" },
 };
 
 const DB_LABELS: Record<DbType, string> = {
@@ -23,6 +24,7 @@ const DB_LABELS: Record<DbType, string> = {
   mysql: "MySQL",
   sqlite: "SQLite",
   csv: "CSV",
+  mongodb: "MongoDB",
 };
 
 export default function AddConnectionModal({ initial, onSave, onClose }: Props) {
@@ -143,7 +145,7 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
           <div>
             <label className="block text-text-secondary text-sm mb-1">Database Type</label>
             <div className="flex gap-2">
-              {(["postgresql", "mysql", "sqlite", "csv"] as DbType[]).map((t) => (
+              {(["postgresql", "mysql", "sqlite", "mongodb", "csv"] as DbType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => changeType(t)}
@@ -255,13 +257,20 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
               </div>
 
               <div>
-                <label className="block text-text-secondary text-sm mb-1">Database</label>
+                <label className="block text-text-secondary text-sm mb-1">
+                  {form.db_type === "mongodb" ? "Auth Database (optional)" : "Database"}
+                </label>
                 <input
                   className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
                   value={form.database}
                   onChange={(e) => set("database", e.target.value)}
-                  placeholder={DEFAULTS[form.db_type].database}
+                  placeholder={form.db_type === "mongodb" ? "admin" : DEFAULTS[form.db_type].database}
                 />
+                {form.db_type === "mongodb" && (
+                  <p className="text-text-muted text-xs mt-1.5">
+                    Leave blank for a no-auth connection. All databases on the server are browsable after connecting.
+                  </p>
+                )}
               </div>
             </>
           )}

@@ -393,7 +393,8 @@ export default function App() {
                     onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
-                    onRunQuery={(q) => store.executeQuery(tab.connectionId, tab.database, q)}
+                    onRunQuery={(q, queryId) => store.executeQuery(tab.connectionId, tab.database, q, queryId)}
+                    onCancelQuery={(queryId) => store.cancelQuery(queryId)}
                     onGetPrimaryKeys={(table) => store.getPrimaryKeys(tab.connectionId, tab.database, table)}
                     onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
                     onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}

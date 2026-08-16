@@ -1,4 +1,4 @@
-import { useRef, useCallback, useMemo, useEffect } from "react";
+import { useRef, useCallback, useMemo, useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { sql, MySQL, PostgreSQL, SQLite, StandardSQL, type SQLDialect, schemaCompletionSource, keywordCompletionSource } from "@codemirror/lang-sql";
 import { dracula } from "@uiw/codemirror-theme-dracula";
@@ -8,13 +8,16 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Compartment, Prec } from "@codemirror/state";
 import { autocompletion, type CompletionContext, type Completion } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
-import { Play, Loader2, Database, GitBranch, Check, X } from "lucide-react";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { Play, Loader2, Database, GitBranch, Check, X, Scissors, Copy, Clipboard, Square } from "lucide-react";
+import ContextMenu from "./ContextMenu";
 
 interface Props {
   value: string;
   onChange: (v: string) => void;
   onRun: (query: string) => void;
   running: boolean;
+  onCancel?: () => void;
   database: string;
   databases: string[];
   dbType: string;
@@ -115,7 +118,7 @@ const customTheme = EditorView.theme({
   },
 });
 
-export default function SqlEditor({ value, onChange, onRun, running, database, databases, dbType, schema, isDark, onDatabaseChange, inTransaction, onToggleTransaction, onCommitTransaction, onRollbackTransaction }: Props) {
+export default function SqlEditor({ value, onChange, onRun, running, onCancel, database, databases, dbType, schema, isDark, onDatabaseChange, inTransaction, onToggleTransaction, onCommitTransaction, onRollbackTransaction }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
 
   const sqlCompartment = useMemo(() => new Compartment(), []);
@@ -146,8 +149,13 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [makeSqlExt]);
 
+  const getView = useCallback(
+    () => (editorRef.current as unknown as { view?: EditorView })?.view,
+    []
+  );
+
   const getSelectedOrAll = useCallback(() => {
-    const view = (editorRef.current as unknown as { view?: EditorView })?.view;
+    const view = getView();
     if (view) {
       const sel = view.state.selection.main;
       if (!sel.empty) {
@@ -155,7 +163,57 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
       }
     }
     return value;
-  }, [value]);
+  }, [value, getView]);
+
+  // Right-click menu for the editor's contenteditable surface — the browser's own
+  // context menu is disabled app-wide, and it isn't an <input>/<textarea> that the
+  // global handler in App.tsx already covers, so cut/copy/paste need their own here.
+  const [editCtx, setEditCtx] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
+
+  const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const view = getView();
+    const hasSelection = !!view && !view.state.selection.main.empty;
+    setEditCtx({ x: e.clientX, y: e.clientY, hasSelection });
+  }, [getView]);
+
+  const cutSelection = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    const sel = view.state.selection.main;
+    if (sel.empty) return;
+    navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to));
+    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: "" } });
+    view.focus();
+  }, [getView]);
+
+  const copySelection = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    const sel = view.state.selection.main;
+    if (sel.empty) return;
+    navigator.clipboard.writeText(view.state.sliceDoc(sel.from, sel.to));
+  }, [getView]);
+
+  const pasteClipboard = useCallback(async () => {
+    const view = getView();
+    if (!view) return;
+    const text = await readText();
+    if (!text) return;
+    const sel = view.state.selection.main;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: text },
+      selection: { anchor: sel.from + text.length },
+    });
+    view.focus();
+  }, [getView]);
+
+  const selectAll = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+    view.focus();
+  }, [getView]);
 
   const runExtension = Prec.highest(
     keymap.of([
@@ -231,17 +289,28 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
               Txn
             </button>
           )}
-          <button
-            onClick={() => onRun(getSelectedOrAll())}
-            disabled={running}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
-          >
-            {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-            Run
-          </button>
+          {running && onCancel ? (
+            <button
+              onClick={onCancel}
+              title="Cancel the running query"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors"
+            >
+              <Square size={12} className="fill-current" />
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={() => onRun(getSelectedOrAll())}
+              disabled={running}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
+            >
+              {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+              Run
+            </button>
+          )}
         </div>
       </div>
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden" onContextMenu={handleEditorContextMenu}>
         <CodeMirror
           ref={editorRef as never}
           value={value}
@@ -261,6 +330,21 @@ export default function SqlEditor({ value, onChange, onRun, running, database, d
           }}
         />
       </div>
+
+      {editCtx && (
+        <ContextMenu
+          x={editCtx.x}
+          y={editCtx.y}
+          onClose={() => setEditCtx(null)}
+          items={[
+            { label: "Cut", icon: <Scissors size={12} />, disabled: !editCtx.hasSelection, onClick: cutSelection },
+            { label: "Copy", icon: <Copy size={12} />, disabled: !editCtx.hasSelection, onClick: copySelection },
+            { label: "Paste", icon: <Clipboard size={12} />, onClick: pasteClipboard },
+            { separator: true },
+            { label: "Select All", onClick: selectAll },
+          ]}
+        />
+      )}
     </div>
   );
 }

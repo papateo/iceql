@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
+import { v4 as uuidv4 } from "uuid";
 import SqlEditor from "./SqlEditor";
+import MongoQueryEditor from "./MongoQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
-import { parseEditableTable, injectCtid, CTID_ALIAS } from "../utils/sql";
+import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase } from "../utils/sql";
 
 interface Props {
   tabId: string;
@@ -16,7 +18,8 @@ interface Props {
   onLoadSchema: () => void;
   onDatabaseChange: (db: string) => void;
   onQueryChange: (q: string) => void;
-  onRunQuery: (q: string) => Promise<QueryResult>;
+  onRunQuery: (q: string, queryId: string) => Promise<QueryResult>;
+  onCancelQuery: (queryId: string) => void;
   onGetPrimaryKeys: (table: string) => Promise<string[]>;
   onBeginTransaction: (database: string) => Promise<string>;
   onExecuteInTransaction: (txId: string, query: string) => Promise<QueryResult>;
@@ -26,12 +29,15 @@ interface Props {
 
 export default function QueryView({
   query, database, databases, dbType, schema, dbColumns, isDark,
-  onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onGetPrimaryKeys,
+  onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onCancelQuery, onGetPrimaryKeys,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
 }: Props) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Only the plain (non-transaction) run path supports cancellation today, so this
+  // stays null while a transaction-scoped statement is in flight.
+  const [currentQueryId, setCurrentQueryId] = useState<string | null>(null);
   const [lastRunQuery, setLastRunQuery] = useState("");
   const [rowIds, setRowIds] = useState<string[] | null>(null);
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
@@ -115,14 +121,32 @@ export default function QueryView({
       if (inTransaction && transactionId) {
         res = await onExecuteInTransaction(transactionId, finalQ);
       } else {
-        res = await onRunQuery(finalQ);
+        const queryId = uuidv4();
+        setCurrentQueryId(queryId);
+        res = await onRunQuery(finalQ, queryId);
       }
       applyResult(res, q, useCtid);
+
+      // The backend has no persistent session — it just runs each query against whatever
+      // database the tab currently points at. Mirror a successful `USE db;` into the tab's
+      // database selector so subsequent queries actually run against the new database.
+      if (dbType === "mysql") {
+        const useDb = parseUseDatabase(q);
+        if (useDb) {
+          const canonical = databases.find((d) => d.toLowerCase() === useDb.toLowerCase());
+          if (canonical && canonical !== database) onDatabaseChange(canonical);
+        }
+      }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
+      setCurrentQueryId(null);
     }
+  };
+
+  const handleCancelQuery = () => {
+    if (currentQueryId) onCancelQuery(currentQueryId);
   };
 
   const handleCommit = async (sqls: string[]): Promise<number> => {
@@ -133,7 +157,7 @@ export default function QueryView({
       // Rollback undoes them too.
       const res = inTransaction && transactionId
         ? await onExecuteInTransaction(transactionId, sql)
-        : await onRunQuery(sql);
+        : await onRunQuery(sql, uuidv4());
       affected += res.row_count ?? 0;
     }
     if (lastRunQuery) await runQuery(lastRunQuery);
@@ -207,22 +231,37 @@ export default function QueryView({
   return (
     <div className="flex flex-col h-full">
       <div style={{ height: editorHeight, flexShrink: 0 }}>
-        <SqlEditor
-          value={query}
-          onChange={onQueryChange}
-          onRun={runQuery}
-          running={loading}
-          database={database}
-          databases={databases}
-          dbType={dbType}
-          schema={schema}
-          isDark={isDark}
-          onDatabaseChange={onDatabaseChange}
-          inTransaction={inTransaction}
-          onToggleTransaction={handleToggleTransaction}
-          onCommitTransaction={handleCommitTransaction}
-          onRollbackTransaction={handleRollbackTransaction}
-        />
+        {dbType === "mongodb" ? (
+          <MongoQueryEditor
+            value={query}
+            onChange={onQueryChange}
+            onRun={runQuery}
+            running={loading}
+            onCancel={currentQueryId ? handleCancelQuery : undefined}
+            database={database}
+            databases={databases}
+            schema={schema}
+            onDatabaseChange={onDatabaseChange}
+          />
+        ) : (
+          <SqlEditor
+            value={query}
+            onChange={onQueryChange}
+            onRun={runQuery}
+            running={loading}
+            onCancel={currentQueryId ? handleCancelQuery : undefined}
+            database={database}
+            databases={databases}
+            dbType={dbType}
+            schema={schema}
+            isDark={isDark}
+            onDatabaseChange={onDatabaseChange}
+            inTransaction={inTransaction}
+            onToggleTransaction={handleToggleTransaction}
+            onCommitTransaction={handleCommitTransaction}
+            onRollbackTransaction={handleRollbackTransaction}
+          />
+        )}
       </div>
 
       {txError && (

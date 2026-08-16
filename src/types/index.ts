@@ -1,4 +1,4 @@
-export type DbType = "postgresql" | "mysql" | "sqlite" | "csv";
+export type DbType = "postgresql" | "mysql" | "sqlite" | "csv" | "mongodb";
 
 export interface ConnectionConfig {
   id: string;

@@ -2,6 +2,7 @@ use crate::db::ConnectionPool;
 use crate::models::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
 use crate::persistence;
 use crate::ConnectionStore;
+use crate::QueryTaskStore;
 use crate::TransactionStore;
 use uuid::Uuid;
 
@@ -27,6 +28,9 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
                 .execute(p)
                 .await
                 .map_err(|e| e.to_string())?;
+        }
+        ConnectionPool::Mongo(_, _) => {
+            // connect() already pings the server, so a successful connect is enough here.
         }
     }
     Ok(())
@@ -112,13 +116,52 @@ pub async fn execute_query(
     connection_id: String,
     database: String,
     query: String,
+    query_id: String,
     state: tauri::State<'_, ConnectionStore>,
+    task_state: tauri::State<'_, QueryTaskStore>,
 ) -> Result<QueryResult, String> {
-    let store = state.lock().await;
-    let pool = store
-        .get(&connection_id)
-        .ok_or_else(|| "Connection not found".to_string())?;
-    pool.execute_query_in(&database, &query).await
+    // Clone the pool handle out (cheap — sqlx pools are Arc-backed) and drop the store
+    // lock immediately, so the query runs without blocking every other connection.
+    let pool = {
+        let store = state.lock().await;
+        store
+            .get(&connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?
+            .clone()
+    };
+
+    let task_store = task_state.inner().clone();
+    let handle = tokio::spawn(async move { pool.execute_query_in(&database, &query).await });
+
+    {
+        let mut tasks = task_store.lock().await;
+        tasks.insert(query_id.clone(), handle.abort_handle());
+    }
+
+    let result = handle.await;
+
+    {
+        let mut tasks = task_store.lock().await;
+        tasks.remove(&query_id);
+    }
+
+    match result {
+        Ok(query_result) => query_result,
+        Err(e) if e.is_cancelled() => Err("Query cancelled".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_query(
+    query_id: String,
+    task_state: tauri::State<'_, QueryTaskStore>,
+) -> Result<(), String> {
+    let tasks = task_state.lock().await;
+    if let Some(handle) = tasks.get(&query_id) {
+        handle.abort();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -137,7 +180,8 @@ pub async fn begin_transaction(
             ConnectionPool::Postgres(_, cfg)
             | ConnectionPool::MySQL(_, cfg)
             | ConnectionPool::SQLite(_, cfg)
-            | ConnectionPool::CSV(_, cfg) => cfg.clone(),
+            | ConnectionPool::CSV(_, cfg)
+            | ConnectionPool::Mongo(_, cfg) => cfg.clone(),
         }
     };
 
@@ -245,4 +289,38 @@ pub fn save_connections(
     connections: Vec<ConnectionConfig>,
 ) -> Result<(), String> {
     persistence::save(&app, &connections)
+}
+
+#[tauri::command]
+pub async fn mongo_update_field(
+    connection_id: String,
+    database: String,
+    collection: String,
+    id_json: String,
+    field: String,
+    value_json: String,
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<(), String> {
+    let store = state.lock().await;
+    let pool = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    pool.mongo_update_field(&database, &collection, &id_json, &field, &value_json)
+        .await
+}
+
+#[tauri::command]
+pub async fn mongo_delete_documents(
+    connection_id: String,
+    database: String,
+    collection: String,
+    id_jsons: Vec<String>,
+    state: tauri::State<'_, ConnectionStore>,
+) -> Result<u64, String> {
+    let store = state.lock().await;
+    let pool = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    pool.mongo_delete_documents(&database, &collection, &id_jsons)
+        .await
 }

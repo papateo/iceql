@@ -162,6 +162,21 @@ export function formatSql(sql: string): string {
   return out;
 }
 
+// Detect a bare `USE <database>;` statement (MySQL/MariaDB session database switch) and
+// return the target database name, or null if the query isn't one. Used to keep the tab's
+// database selector in sync after a successful `USE`, since the backend runs each query
+// against whatever database the frontend tells it to and has no persistent session state.
+export function parseUseDatabase(query: string): string | null {
+  const cleaned = query
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .trim()
+    .replace(/;\s*$/, "");
+  const m = cleaned.match(/^use\s+([^\s;]+)$/i);
+  if (!m) return null;
+  return m[1].replace(/^[`"]|[`"]$/g, "");
+}
+
 // Alias used for the injected ctid column so it can be found and stripped from displayed results.
 export const CTID_ALIAS = "__iceql_ctid__";
 

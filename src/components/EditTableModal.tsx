@@ -232,7 +232,7 @@ export default function EditTableModal({ target, onClose }: Props) {
   const typeList = dbType === "postgresql" ? PG_TYPES : MYSQL_TYPES;
 
   const runQuery = useCallback(async (sql: string): Promise<QueryResult> => {
-    return await invoke<QueryResult>("execute_query", { connectionId, database, query: sql });
+    return await invoke<QueryResult>("execute_query", { connectionId, database, query: sql, queryId: uuidv4() });
   }, [connectionId, database]);
 
   useEffect(() => {

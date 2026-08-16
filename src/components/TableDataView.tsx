@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
+import { v4 as uuidv4 } from "uuid";
 import {
   RefreshCw,
   Loader2,
@@ -216,6 +217,8 @@ export default function TableDataView({
   };
 
   const ac = activeConnections.get(configId);
+  const dbType = ac?.config.db_type;
+  const isMongo = dbType === "mongodb";
   // Schema default values for the open table, keyed by column name — powers "Set Default" in
   // the edit-cell context menu. Absent (undefined) when the sidebar hasn't loaded this table's
   // columns yet; in that case "Set Default" just stays hidden rather than guessing.
@@ -314,14 +317,21 @@ export default function TableDataView({
     if (editingCell) inputRef.current?.focus();
   }, [editingCell]);
 
+  // Mongo's _id can't be changed via update (it would need a delete + reinsert), so editing it
+  // is disallowed rather than silently failing on commit.
+  const isCellEditable = (col: string) => !(isMongo && col === "_id");
+
+  const stringifyCellValue = (v: unknown): string => (typeof v === "object" && v !== null ? JSON.stringify(v) : String(v));
+
   const startEdit = (rowIdx: number, col: string) => {
+    if (!isCellEditable(col)) return;
     if (selectedRows.size > 0) setSelectedRows(new Set());
     const editKey = `${rowIdx}:${col}`;
     const current: string | null = edits.has(editKey)
-      ? (edits.get(editKey) === null ? null : String(edits.get(editKey) ?? ""))
+      ? (edits.get(editKey) === null ? null : stringifyCellValue(edits.get(editKey)))
       : (() => {
           const v = rows[rowIdx]?.[col];
-          return v === null || v === undefined ? null : String(v);
+          return v === null || v === undefined ? null : stringifyCellValue(v);
         })();
     setEditingCell({ rowIdx, col, value: current });
   };
@@ -346,14 +356,46 @@ export default function TableDataView({
   const buildUpdateSQL = (): string[] =>
     buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
 
+  // Mongo documents have no WHERE-by-column story — every edit is a single updateOne
+  // matched by _id, sent field by field through a dedicated command instead of SQL text.
+  const commitAllMongo = async () => {
+    if (!ac || !hasEdits) return;
+    setLoading(true);
+    setError(null);
+    try {
+      for (const [key, value] of edits.entries()) {
+        const sepIdx = key.indexOf(":");
+        const rowIdx = Number(key.slice(0, sepIdx));
+        const col = key.slice(sepIdx + 1);
+        const idJson = JSON.stringify(rows[rowIdx]?.["_id"]);
+        const valueJson = value === null ? "null" : stringifyCellValue(value);
+        await invoke("mongo_update_field", {
+          connectionId: ac.connectionId,
+          database,
+          collection: table,
+          idJson,
+          field: col,
+          valueJson,
+        });
+      }
+      addLog({ sql: `db.${table}.update — ${edits.size} field${edits.size > 1 ? "s" : ""}`, connectionName: ac.config.name, database, status: "success", rowsAffected: edits.size });
+      await fetchInitial();
+    } catch (e) {
+      setError(String(e));
+      addLog({ sql: `db.${table}.update — ${edits.size} field${edits.size > 1 ? "s" : ""}`, connectionName: ac.config.name, database, status: "error", error: String(e) });
+      setLoading(false);
+    }
+  };
+
   const commitAll = async () => {
     if (!ac || !hasEdits) return;
+    if (isMongo) return commitAllMongo();
     const sqls = buildUpdateSQL();
     setLoading(true);
     setError(null);
     try {
       for (const sql of sqls) {
-        const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql });
+        const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql, queryId: uuidv4() });
         addLog({ sql, connectionName: ac.config.name, database, status: "success", rowsAffected: (res as QueryResult).row_count, executionTimeMs: (res as QueryResult).execution_time_ms });
       }
       await fetchInitial();
@@ -364,16 +406,41 @@ export default function TableDataView({
     }
   };
 
+  const handleDeleteMongo = async () => {
+    if (!ac || selectedRows.size === 0) return;
+    const indices = [...selectedRows].sort((a, b) => a - b);
+    const idJsons = indices.map((i) => JSON.stringify(rows[i]?.["_id"]));
+    setDeleting(true);
+    setError(null);
+    try {
+      const deletedCount = await invoke<number>("mongo_delete_documents", {
+        connectionId: ac.connectionId,
+        database,
+        collection: table,
+        idJsons,
+      });
+      addLog({ sql: `db.${table}.deleteMany`, connectionName: ac.config.name, database, status: "success", rowsAffected: deletedCount });
+      setSelectedRows(new Set());
+      setShowDeleteConfirm(false);
+      await fetchInitial();
+    } catch (e) {
+      setError(String(e));
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!ac || selectedRows.size === 0) return;
-    const dbType = ac.config.db_type;
+    if (isMongo) return handleDeleteMongo();
     const indices = [...selectedRows].sort((a, b) => a - b);
     const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices, undefined, primaryKeys);
     setDeleting(true);
     setError(null);
     try {
       for (const sql of sqls) {
-        const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql });
+        const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql, queryId: uuidv4() });
         addLog({ sql, connectionName: ac.config.name, database, status: "success", rowsAffected: (res as QueryResult).row_count, executionTimeMs: (res as QueryResult).execution_time_ms });
       }
       setSelectedRows(new Set());
@@ -676,8 +743,12 @@ export default function TableDataView({
             <span>·</span>
             <button onClick={() => exportData("json")} className="px-1 py-0.5 hover:text-text-primary transition-colors">JSON</button>
             <span>·</span>
-            <button onClick={() => exportData("sql")} className="px-1 py-0.5 hover:text-text-primary transition-colors">SQL</button>
-            <span>·</span>
+            {!isMongo && (
+              <>
+                <button onClick={() => exportData("sql")} className="px-1 py-0.5 hover:text-text-primary transition-colors">SQL</button>
+                <span>·</span>
+              </>
+            )}
             <button onClick={() => exportData("xlsx")} className="px-1 py-0.5 hover:text-text-primary transition-colors">Excel</button>
           </div>
         )}
@@ -688,9 +759,11 @@ export default function TableDataView({
             <button onClick={revertAll} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors">
               <RotateCcw size={12} /> Revert
             </button>
-            <button onClick={() => setShowSqlPreview(true)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors" title="Preview SQL">
-              <Eye size={12} />
-            </button>
+            {!isMongo && (
+              <button onClick={() => setShowSqlPreview(true)} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors" title="Preview SQL">
+                <Eye size={12} />
+              </button>
+            )}
             <button onClick={commitAll} disabled={loading} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-highlight text-bg hover:bg-highlight/90 transition-colors disabled:opacity-50">
               {loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Commit
             </button>
@@ -961,6 +1034,7 @@ export default function TableDataView({
           x={ctxMenu.x} y={ctxMenu.y}
           selectedCount={selectedRows.size} totalCount={rows.length}
           hasCellSel={!!cellSel}
+          hideSql={isMongo}
           onCopy={copySelAsText}
           onCopyCSV={copySelAsCSV}
           onCopyInsertSQL={copySelAsInsertSQL}
@@ -1035,10 +1109,11 @@ export default function TableDataView({
   );
 }
 
-function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onCopyCSV, onCopyInsertSQL, onCopyRows, onCopyRowsCSV, onCopyRowsInsertSQL, onExport, onSelectAll, onDeselectAll, onClose }: {
+function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, hideSql, onCopy, onCopyCSV, onCopyInsertSQL, onCopyRows, onCopyRowsCSV, onCopyRowsInsertSQL, onExport, onSelectAll, onDeselectAll, onClose }: {
   x: number; y: number;
   selectedCount: number; totalCount: number;
   hasCellSel: boolean;
+  hideSql?: boolean;
   onCopy: () => void;
   onCopyCSV: () => void;
   onCopyInsertSQL: () => void;
@@ -1072,25 +1147,25 @@ function TableCtxMenu({ x, y, selectedCount, totalCount, hasCellSel, onCopy, onC
       {hasCellSel && <>
         {btn("Copy", <Copy size={12} />, onCopy)}
         {btn("Copy as CSV", <Copy size={12} />, onCopyCSV)}
-        {btn("Copy as Insert SQL", <Copy size={12} />, onCopyInsertSQL)}
+        {!hideSql && btn("Copy as Insert SQL", <Copy size={12} />, onCopyInsertSQL)}
         <div className="my-1 border-t border-border" />
       </>}
       {selectedCount > 0 && <>
         <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">{selectedCount} row{selectedCount > 1 ? "s" : ""} selected</div>
         {btn("Copy", <Copy size={12} />, onCopyRows)}
         {btn("Copy as CSV", <Copy size={12} />, onCopyRowsCSV)}
-        {btn("Copy as Insert SQL", <Copy size={12} />, onCopyRowsInsertSQL)}
+        {!hideSql && btn("Copy as Insert SQL", <Copy size={12} />, onCopyRowsInsertSQL)}
         <div className="my-1 border-t border-border" />
         {btn("Export selected as CSV", <Download size={12} />, () => onExport("csv", "selected"))}
         {btn("Export selected as JSON", <Download size={12} />, () => onExport("json", "selected"))}
-        {btn("Export selected as SQL Insert", <Download size={12} />, () => onExport("sql", "selected"))}
+        {!hideSql && btn("Export selected as SQL Insert", <Download size={12} />, () => onExport("sql", "selected"))}
         {btn("Export selected as Excel", <Download size={12} />, () => onExport("xlsx", "selected"))}
         <div className="my-1 border-t border-border" />
       </>}
       <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">All {totalCount} rows (this page)</div>
       {btn("Export all as CSV", <Download size={12} />, () => onExport("csv", "all"))}
       {btn("Export all as JSON", <Download size={12} />, () => onExport("json", "all"))}
-      {btn("Export all as SQL Insert", <Download size={12} />, () => onExport("sql", "all"))}
+      {!hideSql && btn("Export all as SQL Insert", <Download size={12} />, () => onExport("sql", "all"))}
       {btn("Export all as Excel", <Download size={12} />, () => onExport("xlsx", "all"))}
       <div className="my-1 border-t border-border" />
       {selectedCount < totalCount

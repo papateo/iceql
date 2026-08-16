@@ -55,6 +55,7 @@ const dbColor = (t: string) =>
   t === "postgresql" ? "text-blue-400"
   : t === "mysql" ? "text-orange-400"
   : t === "sqlite" ? "text-green-400"
+  : t === "mongodb" ? "text-emerald-500"
   : t === "csv" ? "text-yellow-400"
   : "text-text-secondary";
 

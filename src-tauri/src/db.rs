@@ -1,13 +1,17 @@
 use crate::models::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
+use futures_util::TryStreamExt;
 use sqlx::Column;
 use sqlx::TypeInfo;
+use std::collections::HashSet;
 use std::time::Instant;
 
+#[derive(Clone)]
 pub enum ConnectionPool {
     Postgres(sqlx::PgPool, ConnectionConfig),
     MySQL(sqlx::MySqlPool, ConnectionConfig),
     SQLite(sqlx::SqlitePool, ConnectionConfig),
     CSV(sqlx::SqlitePool, ConnectionConfig),
+    Mongo(mongodb::Client, ConnectionConfig),
 }
 
 /// Derive the in-memory SQLite table name from the CSV file's stem.
@@ -352,6 +356,18 @@ impl ConnectionPool {
                     .ok_or_else(|| "CSV file path is required".to_string())?;
                 load_csv_into_sqlite(path, config).await
             }
+            "mongodb" => {
+                let options = mongo_client_options(config);
+                let client = mongodb::Client::with_options(options)
+                    .map_err(|e| format!("MongoDB connection failed: {e}"))?;
+                // Validate connectivity up front so a bad host/auth fails at connect time.
+                client
+                    .database("admin")
+                    .run_command(bson::doc! { "ping": 1 })
+                    .await
+                    .map_err(|e| format!("MongoDB connection failed: {e}"))?;
+                Ok(ConnectionPool::Mongo(client, config.clone()))
+            }
             other => Err(format!("Unsupported database type: {other}")),
         }
     }
@@ -398,6 +414,7 @@ impl ConnectionPool {
                 Ok(ConnectionPool::SQLite(pool, config.clone()))
             }
             "csv" => Err("CSV data sources do not support transactions".to_string()),
+            "mongodb" => Err("MongoDB connections do not support transactions".to_string()),
             other => Err(format!("Unsupported database type: {other}")),
         }
     }
@@ -426,6 +443,9 @@ impl ConnectionPool {
                 } else {
                     execute_sqlite(pool, query, start).await
                 }
+            }
+            ConnectionPool::Mongo(_, _) => {
+                Err("MongoDB connections do not support transactions".to_string())
             }
         }
     }
@@ -460,6 +480,9 @@ impl ConnectionPool {
             }
             ConnectionPool::SQLite(_, _) => Ok(vec!["main".to_string()]),
             ConnectionPool::CSV(_, _) => Ok(vec!["csv".to_string()]),
+            ConnectionPool::Mongo(client, _) => {
+                client.list_database_names().await.map_err(|e| e.to_string())
+            }
         }
     }
 
@@ -538,6 +561,17 @@ impl ConnectionPool {
             ConnectionPool::CSV(_, config) => {
                 let tname = csv_table_name(config);
                 Ok(vec![TableInfo { name: tname, table_type: "TABLE".to_string() }])
+            }
+            ConnectionPool::Mongo(client, _) => {
+                let names = client
+                    .database(database)
+                    .list_collection_names()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(names
+                    .into_iter()
+                    .map(|name| TableInfo { name, table_type: "COLLECTION".to_string() })
+                    .collect())
             }
         }
     }
@@ -629,6 +663,43 @@ impl ConnectionPool {
                     })
                     .collect())
             }
+            ConnectionPool::Mongo(client, _) => {
+                // Collections are schemaless — sample a handful of documents and report the
+                // union of fields seen, best-effort. Not authoritative like a real schema.
+                let coll = client.database(database).collection::<bson::Document>(table);
+                let mut cursor = coll
+                    .find(bson::doc! {})
+                    .limit(50)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut order: Vec<String> = vec![];
+                let mut seen = HashSet::new();
+                let mut types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    for (k, v) in doc.iter() {
+                        if seen.insert(k.clone()) {
+                            order.push(k.clone());
+                            types.insert(k.clone(), bson_type_name(v));
+                        }
+                    }
+                }
+                if let Some(pos) = order.iter().position(|c| c == "_id") {
+                    let id = order.remove(pos);
+                    order.insert(0, id);
+                }
+                Ok(order
+                    .into_iter()
+                    .map(|name| {
+                        let is_id = name == "_id";
+                        ColumnInfo {
+                            data_type: types.get(&name).cloned().unwrap_or_else(|| "mixed".to_string()),
+                            is_nullable: !is_id,
+                            column_default: None,
+                            name,
+                        }
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -691,6 +762,7 @@ impl ConnectionPool {
                 Ok(rows.iter().map(|r| r.get::<String, _>("name")).collect())
             }
             ConnectionPool::CSV(_, _) => Ok(vec![]),
+            ConnectionPool::Mongo(_, _) => Ok(vec!["_id".to_string()]),
         }
     }
 
@@ -743,6 +815,9 @@ impl ConnectionPool {
                 } else {
                     execute_sqlite(pool, query, start).await
                 }
+            }
+            ConnectionPool::Mongo(client, _) => {
+                mongo_run_find_query(client, database, query, start).await
             }
         }
     }
@@ -843,7 +918,231 @@ impl ConnectionPool {
                 result.row_count = total as u64;
                 Ok(result)
             }
+            ConnectionPool::Mongo(client, _) => {
+                let start = Instant::now();
+                let coll = client.database(database).collection::<bson::Document>(table);
+                let total = coll
+                    .count_documents(bson::doc! {})
+                    .await
+                    .map_err(|e| e.to_string())? as u64;
+
+                let mut find = coll.find(bson::doc! {}).skip((page * page_size).max(0) as u64).limit(page_size);
+                if let Some(col) = sort_col.filter(|c| !c.is_empty()) {
+                    let dir: i32 = if sort_dir.map(|d| d.eq_ignore_ascii_case("desc")).unwrap_or(false) { -1 } else { 1 };
+                    find = find.sort(bson::doc! { col: dir });
+                }
+                let mut cursor = find.await.map_err(|e| e.to_string())?;
+
+                let mut docs: Vec<bson::Document> = vec![];
+                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    docs.push(doc);
+                }
+
+                let mut result = flatten_mongo_docs(&docs);
+                result.row_count = total;
+                result.execution_time_ms = start.elapsed().as_millis() as u64;
+                Ok(result)
+            }
         }
+    }
+
+    /// Set a single top-level field on one document, matched by `_id`. `id_json` and
+    /// `value_json` are the raw text the frontend has for each — parsed as JSON when possible
+    /// (so numbers/booleans/objects/ObjectId-extended-JSON round-trip as their real BSON type),
+    /// otherwise stored as the literal string the user typed.
+    pub async fn mongo_update_field(
+        &self,
+        database: &str,
+        collection: &str,
+        id_json: &str,
+        field: &str,
+        value_json: &str,
+    ) -> Result<(), String> {
+        let client = match self {
+            ConnectionPool::Mongo(c, _) => c,
+            _ => return Err("Not a MongoDB connection".to_string()),
+        };
+        let id_bson = json_or_string_to_bson(id_json)?;
+        let value_bson = json_or_string_to_bson(value_json)?;
+        let mut set_doc = bson::Document::new();
+        set_doc.insert(field, value_bson);
+        let coll = client.database(database).collection::<bson::Document>(collection);
+        coll.update_one(bson::doc! { "_id": id_bson }, bson::doc! { "$set": set_doc })
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Delete documents by `_id`. Returns the number actually deleted.
+    pub async fn mongo_delete_documents(
+        &self,
+        database: &str,
+        collection: &str,
+        id_jsons: &[String],
+    ) -> Result<u64, String> {
+        let client = match self {
+            ConnectionPool::Mongo(c, _) => c,
+            _ => return Err("Not a MongoDB connection".to_string()),
+        };
+        let ids = id_jsons
+            .iter()
+            .map(|s| json_or_string_to_bson(s))
+            .collect::<Result<Vec<_>, _>>()?;
+        let coll = client.database(database).collection::<bson::Document>(collection);
+        let result = coll
+            .delete_many(bson::doc! { "_id": { "$in": ids } })
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(result.deleted_count)
+    }
+}
+
+/// Build `mongodb::options::ClientOptions` from a `ConnectionConfig`, wiring up
+/// host/port/credentials via the driver's typed builders instead of a hand-built URI string
+/// (avoids percent-encoding pitfalls with special characters in the username/password).
+fn mongo_client_options(config: &ConnectionConfig) -> mongodb::options::ClientOptions {
+    use mongodb::options::{ClientOptions, Credential, ServerAddress};
+
+    let port = if config.port == 0 { None } else { Some(config.port) };
+    let hosts = vec![ServerAddress::Tcp { host: config.host.clone(), port }];
+
+    if config.username.is_empty() {
+        ClientOptions::builder().hosts(hosts).build()
+    } else {
+        let source = if config.database.is_empty() { None } else { Some(config.database.clone()) };
+        let credential = Credential::builder()
+            .username(config.username.clone())
+            .password(config.password.clone())
+            .source(source)
+            .build();
+        ClientOptions::builder().hosts(hosts).credential(credential).build()
+    }
+}
+
+/// Best-effort BSON type name for a sampled field — shown in the sidebar's schema tree.
+fn bson_type_name(b: &bson::Bson) -> String {
+    match b {
+        bson::Bson::Double(_) => "double",
+        bson::Bson::String(_) => "string",
+        bson::Bson::Array(_) => "array",
+        bson::Bson::Document(_) => "object",
+        bson::Bson::Boolean(_) => "bool",
+        bson::Bson::Null => "null",
+        bson::Bson::Int32(_) => "int32",
+        bson::Bson::Int64(_) => "int64",
+        bson::Bson::ObjectId(_) => "objectId",
+        bson::Bson::DateTime(_) => "date",
+        bson::Bson::Decimal128(_) => "decimal128",
+        bson::Bson::Timestamp(_) => "timestamp",
+        bson::Bson::Binary(_) => "binary",
+        _ => "mixed",
+    }
+    .to_string()
+}
+
+/// Convert a BSON value to JSON for display, using MongoDB's "relaxed" extended JSON so
+/// ObjectId/DateTime/etc. round-trip as `{"$oid": "..."}`-style tagged objects instead of
+/// being silently coerced or dropped.
+fn bson_to_json(b: &bson::Bson) -> serde_json::Value {
+    b.clone().into_relaxed_extjson()
+}
+
+/// Flatten a page of Mongo documents into a `QueryResult`: columns are the union of top-level
+/// field names across the page (in first-seen order, with `_id` pinned first), and each row
+/// aligns values to that column set. Nested objects/arrays stay as JSON in their cell — the
+/// grid already renders non-primitive cell values as JSON text.
+fn flatten_mongo_docs(docs: &[bson::Document]) -> QueryResult {
+    let mut columns: Vec<String> = vec![];
+    let mut seen = HashSet::new();
+    for doc in docs {
+        for (k, _) in doc.iter() {
+            if seen.insert(k.clone()) {
+                columns.push(k.clone());
+            }
+        }
+    }
+    if let Some(pos) = columns.iter().position(|c| c == "_id") {
+        let id = columns.remove(pos);
+        columns.insert(0, id);
+    }
+
+    let rows: Vec<Vec<serde_json::Value>> = docs
+        .iter()
+        .map(|doc| {
+            columns
+                .iter()
+                .map(|c| doc.get(c).map(bson_to_json).unwrap_or(serde_json::Value::Null))
+                .collect()
+        })
+        .collect();
+
+    QueryResult {
+        row_count: rows.len() as u64,
+        columns,
+        rows,
+        execution_time_ms: 0,
+    }
+}
+
+/// The Mongo "query tab" has no SQL to run — the frontend sends a small JSON spec instead:
+/// `{"collection": "...", "filter": {...}, "sort": {...}, "limit": 200}`. Only `collection`
+/// is required; `filter`/`sort` accept MongoDB extended JSON (e.g. `{"$oid": "..."}`).
+async fn mongo_run_find_query(
+    client: &mongodb::Client,
+    database: &str,
+    query: &str,
+    start: Instant,
+) -> Result<QueryResult, String> {
+    #[derive(serde::Deserialize)]
+    struct MongoQuerySpec {
+        collection: String,
+        filter: Option<serde_json::Value>,
+        sort: Option<serde_json::Value>,
+        limit: Option<i64>,
+    }
+
+    let spec: MongoQuerySpec =
+        serde_json::from_str(query).map_err(|e| format!("Invalid Mongo query: {e}"))?;
+
+    let filter = match spec.filter {
+        Some(v) => json_to_document(v)?,
+        None => bson::Document::new(),
+    };
+
+    let coll = client.database(database).collection::<bson::Document>(&spec.collection);
+    let mut find = coll.find(filter).limit(spec.limit.unwrap_or(200));
+    if let Some(sort_val) = spec.sort {
+        find = find.sort(json_to_document(sort_val)?);
+    }
+
+    let mut cursor = find.await.map_err(|e| e.to_string())?;
+    let mut docs: Vec<bson::Document> = vec![];
+    while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+        docs.push(doc);
+    }
+
+    let mut result = flatten_mongo_docs(&docs);
+    result.execution_time_ms = start.elapsed().as_millis() as u64;
+    Ok(result)
+}
+
+/// Parse a JSON value (extended JSON allowed, e.g. `{"$oid": "..."}`) into a BSON document.
+fn json_to_document(v: serde_json::Value) -> Result<bson::Document, String> {
+    let bson_val = bson::Bson::try_from(v).map_err(|e| format!("Invalid BSON value: {e}"))?;
+    bson_val
+        .as_document()
+        .cloned()
+        .ok_or_else(|| "Expected a JSON object".to_string())
+}
+
+/// Parse a single JSON-or-plain-text value into BSON, used for `_id` filters and edited cell
+/// values: valid JSON (numbers, booleans, null, objects, arrays, extended JSON) is interpreted
+/// as its typed BSON equivalent; anything else (e.g. bare unquoted text) is stored as a string,
+/// matching what the user actually typed.
+fn json_or_string_to_bson(s: &str) -> Result<bson::Bson, String> {
+    match serde_json::from_str::<serde_json::Value>(s) {
+        Ok(v) => bson::Bson::try_from(v).map_err(|e| format!("Invalid BSON value: {e}")),
+        Err(_) => Ok(bson::Bson::String(s.to_string())),
     }
 }
 

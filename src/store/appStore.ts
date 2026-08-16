@@ -686,7 +686,7 @@ export function useAppStore() {
   );
 
   const executeQuery = useCallback(
-    async (configId: string, database: string, query: string): Promise<QueryResult> => {
+    async (configId: string, database: string, query: string, queryId: string): Promise<QueryResult> => {
       const ac = activeConnections.get(configId);
       if (!ac) throw new Error("Not connected");
       // For Postgres, auto-quote known case-sensitive identifiers so unquoted queries resolve.
@@ -699,6 +699,7 @@ export function useAppStore() {
           connectionId: ac.connectionId,
           database,
           query: finalQuery,
+          queryId,
         });
         addLog({
           sql: finalQuery,
@@ -722,6 +723,14 @@ export function useAppStore() {
     },
     [activeConnections, addLog]
   );
+
+  const cancelQuery = useCallback(async (queryId: string) => {
+    try {
+      await invoke("cancel_query", { queryId });
+    } catch (e) {
+      console.error("Failed to cancel query:", e);
+    }
+  }, []);
 
   const clearLogs = useCallback(() => setQueryLogs([]), []);
 
@@ -815,6 +824,7 @@ export function useAppStore() {
     updateTabQuery,
     updateTabDatabase,
     executeQuery,
+    cancelQuery,
     getPrimaryKeys,
     beginTransaction,
     executeInTransaction,
