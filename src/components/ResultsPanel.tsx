@@ -295,6 +295,17 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     overscan: 5,
   });
 
+  // react-virtual only re-measures a column when explicitly told to via resizeItem() — the two
+  // handlers below already do that for their own actions (dragging, auto-fit), but colWidths
+  // can also change for OTHER reasons (e.g. a fresh query result shifting baseColWidths for a
+  // column nobody manually resized). Without this, the header — which reads colWidths directly
+  // — updates immediately while the virtualized body cells keep rendering at the old cached
+  // width, so header and body drift out of alignment.
+  useEffect(() => {
+    colWidths.forEach((w, i) => columnVirtualizer.resizeItem(i, w));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colWidths]);
+
   // Drag-to-resize a column header. react-virtual's internal measurement cache only
   // invalidates via an explicit resizeItem() call — just changing colWidths (state) updates
   // the header, but the virtualized body cells need resizeItem() to pick up the new size too.
