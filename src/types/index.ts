@@ -1,5 +1,16 @@
 export type DbType = "postgresql" | "mysql" | "sqlite" | "csv" | "mongodb" | "redis";
 
+export interface SshTunnelConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  auth_method: "password" | "key";
+  password?: string;
+  private_key_path?: string; // path on disk — the key's contents are never stored in the config
+  passphrase?: string;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
@@ -10,6 +21,7 @@ export interface ConnectionConfig {
   password: string;
   database: string;
   filename?: string; // for SQLite
+  ssh_tunnel?: SshTunnelConfig;
 }
 
 export interface TableInfo {

@@ -315,6 +315,7 @@ impl ConnectionPool {
             password: String::new(),
             database: "main".to_string(),
             filename: None,
+            ssh_tunnel: None,
         };
 
         Ok((ConnectionPool::SQLite(pool, config.clone()), config))

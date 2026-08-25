@@ -11,6 +11,25 @@ pub struct ConnectionConfig {
     pub password: String, // NOTE: stored in plaintext for simplicity
     pub database: String,
     pub filename: Option<String>, // for SQLite
+    // `#[serde(default)]` so connections saved/exported before this field existed still
+    // deserialize fine (as "no tunnel") instead of failing outright.
+    #[serde(default)]
+    pub ssh_tunnel: Option<SshTunnelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SshTunnelConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: String, // "password" | "key"
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub private_key_path: Option<String>, // NOTE: only the path is stored, never key contents
+    #[serde(default)]
+    pub passphrase: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

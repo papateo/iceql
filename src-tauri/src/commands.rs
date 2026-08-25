@@ -1,14 +1,19 @@
 use crate::db::ConnectionPool;
 use crate::models::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
 use crate::persistence;
+use crate::ssh_tunnel;
 use crate::ConnectionStore;
 use crate::QueryTaskStore;
 use crate::TransactionStore;
+use crate::TunnelStore;
 use uuid::Uuid;
 
 #[tauri::command]
 pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
-    let pool = ConnectionPool::connect(&config).await?;
+    // The tunnel (if any) only needs to live for the duration of this test — dropped at the
+    // end of the function, which tears it down.
+    let (effective_config, _tunnel) = ssh_tunnel::resolve_effective_config(&config).await?;
+    let pool = ConnectionPool::connect(&effective_config).await?;
     // Try a simple query to verify the connection is live
     match &pool {
         ConnectionPool::Postgres(p, _) => {
@@ -40,11 +45,18 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
 pub async fn connect(
     config: ConnectionConfig,
     state: tauri::State<'_, ConnectionStore>,
+    tunnels: tauri::State<'_, TunnelStore>,
 ) -> Result<String, String> {
-    let pool = ConnectionPool::connect(&config).await?;
+    let (effective_config, tunnel) = ssh_tunnel::resolve_effective_config(&config).await?;
+    let pool = ConnectionPool::connect(&effective_config).await?;
     let connection_id = Uuid::new_v4().to_string();
     let mut store = state.lock().await;
     store.insert(connection_id.clone(), pool);
+    // Keep the tunnel (if any) alive for as long as this connection stays open — dropped
+    // (torn down) in `disconnect` below.
+    if let Some(tunnel) = tunnel {
+        tunnels.lock().await.insert(connection_id.clone(), tunnel);
+    }
     Ok(connection_id)
 }
 
@@ -52,9 +64,11 @@ pub async fn connect(
 pub async fn disconnect(
     connection_id: String,
     state: tauri::State<'_, ConnectionStore>,
+    tunnels: tauri::State<'_, TunnelStore>,
 ) -> Result<(), String> {
     let mut store = state.lock().await;
     store.remove(&connection_id);
+    tunnels.lock().await.remove(&connection_id);
     Ok(())
 }
 
