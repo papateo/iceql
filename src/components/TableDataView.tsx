@@ -519,7 +519,13 @@ export default function TableDataView({
     } finally {
       setLoading(false);
     }
-  }, [ac, database, table, pageSize, sortCol, sortDir]);
+    // Only these specific (stable) fields off `ac` are actually used above — depending on `ac`
+    // itself would recreate this callback (and re-fire the effect below) every time ANYTHING
+    // about the connection changes elsewhere, e.g. another tab's autocomplete schema load
+    // updating dbColumns/dbTables for the same connection, causing every open table tab on
+    // that connection to spuriously refetch its data in lockstep with unrelated activity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ac?.connectionId, ac?.config.db_type, ac?.config.name, database, table, pageSize, sortCol, sortDir]);
 
   // Load next page (append)
   const fetchMore = useCallback(async () => {
@@ -552,7 +558,9 @@ export default function TableDataView({
     } finally {
       setLoadingMore(false);
     }
-  }, [ac, database, table, pageSize, loadedPages, loadingMore, hasMore, sortCol, sortDir]);
+    // Same rationale as fetchInitial above — depend on the specific stable fields, not `ac`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ac?.connectionId, ac?.config.db_type, ac?.config.name, database, table, pageSize, loadedPages, loadingMore, hasMore, sortCol, sortDir]);
 
   useEffect(() => { fetchInitial(); }, [fetchInitial]);
 
