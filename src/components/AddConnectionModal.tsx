@@ -185,10 +185,8 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
                   key={t}
                   onClick={() => changeType(t)}
                   title={DB_LABELS[t]}
-                  className={`flex-1 py-2.5 rounded-lg border transition-colors flex items-center justify-center ${
-                    form.db_type === t
-                      ? "bg-highlight border-highlight"
-                      : "bg-accent border-border hover:border-highlight/50"
+                  className={`flex-1 py-2.5 rounded-lg border-2 bg-accent transition-colors flex items-center justify-center ${
+                    form.db_type === t ? "border-highlight" : "border-border hover:border-highlight/50"
                   }`}
                 >
                   <DbLogo type={t} size={18} />
