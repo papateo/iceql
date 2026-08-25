@@ -100,11 +100,13 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
   };
 
   const browsePrivateKey = async () => {
+    // No `filters` here on purpose — SSH private key files (id_rsa, id_ed25519, ...) have no
+    // extension, and an `extensions: ["*"]` filter on macOS is matched literally rather than
+    // treated as "any file", which grays out and disables every file in the picker.
     const selected = await open({
       multiple: false,
       directory: false,
       title: "Select SSH private key",
-      filters: [{ name: "All Files", extensions: ["*"] }],
     });
     if (typeof selected === "string") setSsh("private_key_path", selected);
   };
