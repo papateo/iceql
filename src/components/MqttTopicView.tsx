@@ -220,12 +220,18 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
   const messages = node?.messages ?? [];
   // Newest first, so the latest reading is always right at the top without having to scroll.
   const messagesNewestFirst = useMemo(() => [...messages].reverse(), [messages]);
+  // Defaults to this tab's own topic, but stays editable — publish to any topic from here,
+  // not just the one currently being viewed (matches MQTT Explorer's own Publish panel).
+  const [publishTopic, setPublishTopic] = useState(topic);
   const [payload, setPayload] = useState("");
   const [qos, setQos] = useState(0);
   const [retain, setRetain] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"full" | "diff">("full");
+  // Only meaningful in "Last" mode — with it off, "Last" just shows the latest message as-is,
+  // no comparison against the previous one.
+  const [highlightDiff, setHighlightDiff] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageCount = messages.length;
 
@@ -236,11 +242,11 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
   }, [messageCount]);
 
   const handlePublish = async () => {
-    if (!payload.trim()) return;
+    if (!payload.trim() || !publishTopic.trim()) return;
     setPublishing(true);
     setPublishError(null);
     try {
-      await onPublish(connectionId, topic, payload, qos, retain);
+      await onPublish(connectionId, publishTopic, payload, qos, retain);
     } catch (e) {
       setPublishError(String(e));
     } finally {
@@ -273,6 +279,20 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
             <GitCompare size={12} /> Last
           </button>
         </div>
+        <label
+          className={`flex items-center gap-1.5 text-[11px] flex-shrink-0 select-none transition-colors ${
+            viewMode === "diff" ? "text-text-secondary cursor-pointer" : "text-text-muted/50 cursor-default"
+          }`}
+          title="Highlight what changed from the previous message"
+        >
+          <input
+            type="checkbox"
+            checked={highlightDiff}
+            disabled={viewMode !== "diff"}
+            onChange={(e) => setHighlightDiff(e.target.checked)}
+          />
+          Diff
+        </label>
         <span className="text-xs text-text-muted flex-shrink-0">
           {(node?.messageCount ?? 0).toLocaleString()} message{node?.messageCount === 1 ? "" : "s"}
         </span>
@@ -293,7 +313,7 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
           </div>
         ) : viewMode === "full" ? (
           messagesNewestFirst.map((m, i) => <MessageCard key={messages.length - 1 - i} message={m} />)
-        ) : (
+        ) : highlightDiff ? (
           // A single live card, not a growing history — it just re-renders in place against
           // the latest message as new ones arrive, showing "what just changed" rather than a
           // scrolling diff-per-message log.
@@ -302,6 +322,9 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
             message={messages[messages.length - 1]}
             prevPayload={messages.length > 1 ? messages[messages.length - 2].payload : null}
           />
+        ) : (
+          // Diff highlighting turned off — just the latest message, plain, no comparison.
+          <MessageCard key={messages.length} message={messages[messages.length - 1]} />
         )}
       </div>
 
@@ -311,6 +334,13 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
             {publishError}
           </div>
         )}
+        <input
+          type="text"
+          className="w-full bg-accent border border-border rounded-lg px-3 py-1.5 text-text-primary text-xs font-mono focus:outline-none focus:border-highlight"
+          placeholder="Topic to publish to..."
+          value={publishTopic}
+          onChange={(e) => setPublishTopic(e.target.value)}
+        />
         <textarea
           className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-xs font-mono focus:outline-none focus:border-highlight resize-none"
           rows={2}
@@ -338,7 +368,7 @@ export default function MqttTopicView({ connectionId, topic, mqttRoot, onPublish
           <div className="flex-1" />
           <button
             onClick={handlePublish}
-            disabled={publishing || !payload.trim()}
+            disabled={publishing || !payload.trim() || !publishTopic.trim()}
             title="Publish (Cmd+Enter)"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-highlight text-white hover:bg-highlight/90 transition-colors disabled:opacity-50"
           >
