@@ -56,6 +56,9 @@ export default function App() {
   const [showConnManager, setShowConnManager] = useState(false);
   const [railCtx, setRailCtx] = useState<{ x: number; y: number; configId: string } | null>(null);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
+  const logPanelRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const splitPaneRef = useRef<HTMLDivElement>(null);
   // Split view: pins one extra tab in a second pane next to the active one, for side-by-side
   // comparison. Only one tab id, not a full second tab bar — switch it via the tab bar's
   // "Open in Split View" context menu entry; closing it just returns that tab to the background.
@@ -180,11 +183,18 @@ export default function App() {
     setDragging(true);
     const startX = e.clientX;
     const startW = sidebarWidth;
+    // Every open tab stays mounted (see the "Tab content" comment below), so a setState here on
+    // every mousemove tick would re-render all of them each pixel of drag — that's the "berat"
+    // (heavy/laggy) feel. Mutate the DOM directly for live feedback instead, and only commit to
+    // React state once, on mouseup — one re-render for the whole drag instead of one per pixel.
+    let finalW = startW;
     const onMove = (ev: MouseEvent) => {
-      setSidebarWidth(Math.max(180, Math.min(480, startW + (ev.clientX - startX))));
+      finalW = Math.max(180, Math.min(480, startW + (ev.clientX - startX)));
+      if (sidebarRef.current) sidebarRef.current.style.width = `${finalW}px`;
     };
     const onUp = () => {
       setDragging(false);
+      setSidebarWidth(finalW);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -198,6 +208,9 @@ export default function App() {
     const horizontal = splitOrientation === "horizontal";
     const startPos = horizontal ? e.clientY : e.clientX;
     const startSize = splitSize;
+    // Same DOM-first approach as the sidebar divider above — this one is even more important,
+    // since both the main pane and the split pane hold live, potentially large result grids.
+    let finalSize = startSize;
     const onMove = (ev: MouseEvent) => {
       // Dragging the divider up/left (negative delta) should grow the split pane, since it sits
       // below/right of the divider — the reverse sign from the sidebar's own divider. Capped
@@ -207,10 +220,15 @@ export default function App() {
       const maxSize = horizontal
         ? Math.max(200, window.innerHeight - 260)
         : Math.max(300, window.innerWidth - 420);
-      setSplitSize(Math.max(200, Math.min(maxSize, startSize - (pos - startPos))));
+      finalSize = Math.max(200, Math.min(maxSize, startSize - (pos - startPos)));
+      if (splitPaneRef.current) {
+        if (horizontal) splitPaneRef.current.style.height = `${finalSize}px`;
+        else splitPaneRef.current.style.width = `${finalSize}px`;
+      }
     };
     const onUp = () => {
       setSplitDragging(false);
+      setSplitSize(finalSize);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -359,6 +377,7 @@ export default function App() {
       {/* Sidebar + resize divider, wrapped so the collapse toggle can anchor to their shared edge */}
       <div className="relative flex flex-shrink-0">
         <div
+          ref={sidebarRef}
           className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden select-none"
           style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
         >
@@ -495,6 +514,7 @@ export default function App() {
                 onMouseDown={handleSplitDividerMouseDown}
               />
               <div
+                ref={splitPaneRef}
                 className="flex flex-col overflow-hidden flex-shrink-0"
                 style={splitOrientation === "horizontal" ? { height: splitSize } : { width: splitSize }}
               >
@@ -539,10 +559,13 @@ export default function App() {
                   e.preventDefault();
                   const startX = e.clientX;
                   const startW = logPanelWidth;
+                  let finalW = startW;
                   const onMove = (ev: MouseEvent) => {
-                    setLogPanelWidth(Math.max(220, Math.min(640, startW - (ev.clientX - startX))));
+                    finalW = Math.max(220, Math.min(640, startW - (ev.clientX - startX)));
+                    if (logPanelRef.current) logPanelRef.current.style.width = `${finalW}px`;
                   };
                   const onUp = () => {
+                    setLogPanelWidth(finalW);
                     window.removeEventListener("mousemove", onMove);
                     window.removeEventListener("mouseup", onUp);
                   };
@@ -550,7 +573,7 @@ export default function App() {
                   window.addEventListener("mouseup", onUp);
                 }}
               />
-              <div className="flex-shrink-0 overflow-hidden" style={{ width: logPanelWidth }}>
+              <div ref={logPanelRef} className="flex-shrink-0 overflow-hidden" style={{ width: logPanelWidth }}>
                 <SqlLogPanel
                   logs={store.queryLogs}
                   onClose={() => setShowLogs(false)}
