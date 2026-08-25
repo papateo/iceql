@@ -68,6 +68,7 @@ export default function QueryView({
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
   const [editorHeight, setEditorHeight] = useState(240);
   const [dragging, setDragging] = useState(false);
+  const editorBoxRef = useRef<HTMLDivElement>(null);
 
   // Transaction state
   const [inTransaction, setInTransaction] = useState(false);
@@ -311,12 +312,18 @@ export default function QueryView({
     setDragging(true);
     const startY = e.clientY;
     const startH = editorHeight;
+    // A setState here on every mousemove tick would re-render the SQL editor (CodeMirror) and
+    // the results grid — potentially thousands of rows — on every pixel of drag, which is what
+    // made this feel laggy. Mutate the DOM directly for live feedback, and commit to React
+    // state just once, on mouseup.
+    let finalH = startH;
     const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientY - startY;
-      setEditorHeight(Math.max(80, Math.min(600, startH + delta)));
+      finalH = Math.max(80, Math.min(600, startH + (ev.clientY - startY)));
+      if (editorBoxRef.current) editorBoxRef.current.style.height = `${finalH}px`;
     };
     const onUp = () => {
       setDragging(false);
+      setEditorHeight(finalH);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -326,7 +333,7 @@ export default function QueryView({
 
   return (
     <div className="flex flex-col h-full">
-      <div style={{ height: editorHeight, flexShrink: 0 }}>
+      <div ref={editorBoxRef} style={{ height: editorHeight, flexShrink: 0 }}>
         {dbType === "mongodb" ? (
           <MongoQueryEditor
             value={query}
