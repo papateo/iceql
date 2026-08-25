@@ -33,7 +33,7 @@ function emptyMqttNode(name: string, fullPath: string): MqttTopicNode {
 // path segments not seen before (immutably, so React re-renders only the changed branch).
 function insertMqttMessage(root: MqttTopicNode, topic: string, msg: MqttMessage): MqttTopicNode {
   const segments = topic.split("/");
-  const recur = (node: MqttTopicNode, idx: number, path: string): MqttTopicNode => {
+  const recur = (node: MqttTopicNode, idx: number): MqttTopicNode => {
     if (idx === segments.length) {
       return {
         ...node,
@@ -42,14 +42,17 @@ function insertMqttMessage(root: MqttTopicNode, topic: string, msg: MqttMessage)
       };
     }
     const seg = segments[idx];
-    const childPath = path ? `${path}/${seg}` : seg;
+    // Built from the original segments array (not incrementally concatenated) so a topic
+    // starting with "/" — whose first segment is "" — doesn't get treated as "no path yet"
+    // by a `path ? ... : seg` fallback and silently lose its leading slash in fullPath.
+    const childPath = segments.slice(0, idx + 1).join("/");
     const child = node.children[seg] ?? emptyMqttNode(seg, childPath);
     return {
       ...node,
-      children: { ...node.children, [seg]: recur(child, idx + 1, childPath) },
+      children: { ...node.children, [seg]: recur(child, idx + 1) },
     };
   };
-  return recur(root, 0, "");
+  return recur(root, 0);
 }
 
 function base64ToUtf8(b64: string): string {
