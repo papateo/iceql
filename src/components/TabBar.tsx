@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { X, Table, Code2, Plus, Crosshair } from "lucide-react";
+import { X, Table, Code2, Plus, Crosshair, Columns2 } from "lucide-react";
 import type { Tab } from "../types";
 
 interface Props {
@@ -13,11 +13,16 @@ interface Props {
   onLocate: (tab: Tab) => void;
   onNewQuery: () => void;
   canNewQuery: boolean;
+  // Split-view support — optional so TabBar stays usable standalone (e.g. a future second pane
+  // doesn't need to offer splitting itself). `splitTabId` marks whichever tab is currently
+  // pinned to the split pane, so its row can be visually flagged.
+  onOpenSplit?: (id: string) => void;
+  splitTabId?: string | null;
 }
 
 export default function TabBar({
   tabs, activeTabId, onSelect, onClose, onCloseOthers, onReorder,
-  onPromote, onLocate, onNewQuery, canNewQuery,
+  onPromote, onLocate, onNewQuery, canNewQuery, onOpenSplit, splitTabId,
 }: Props) {
   const tabsRef = useRef(tabs);
   const onSelectRef = useRef(onSelect);
@@ -212,9 +217,11 @@ export default function TabBar({
                 : !isActive && !isDragging
                 ? "text-text-muted hover:text-text-secondary hover:bg-accent/50"
                 : "",
+              tab.id === splitTabId && !isDragging ? "ring-1 ring-inset ring-blue-400/40" : "",
             ].join(" ")}
-            title={tab.preview ? "Preview tab — double-click to keep open" : undefined}
+            title={tab.id === splitTabId ? "Open in split view" : tab.preview ? "Preview tab — double-click to keep open" : undefined}
           >
+            {tab.id === splitTabId && <Columns2 size={11} className="text-blue-400 flex-shrink-0" />}
             {tab.type === "table" ? (
               <button
                 onMouseDown={(e) => e.stopPropagation()}
@@ -270,6 +277,26 @@ export default function TabBar({
               <X size={12} className="text-text-muted" /> Close Other Tabs
             </button>
           )}
+          {onOpenSplit && (() => {
+            // Splitting only makes sense against a different tab than what's already showing —
+            // disabled (not hidden) in those cases so the option stays discoverable everywhere.
+            const isActive = ctxMenu.tabId === activeTabId;
+            const isSplit = ctxMenu.tabId === splitTabId;
+            const disabled = isActive || isSplit;
+            return (
+              <>
+                <div className="h-px bg-border my-1" />
+                <button
+                  onClick={() => { if (!disabled) onOpenSplit(ctxMenu.tabId); setCtxMenu(null); }}
+                  disabled={disabled}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-accent transition-colors text-left disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-default"
+                >
+                  <Columns2 size={12} className="text-text-muted" />
+                  {isSplit ? "Already in Split View" : isActive ? "Already Open (Active Tab)" : "Open in Split View"}
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

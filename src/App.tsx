@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard, ChevronLeft, ChevronRight } from "lucide-react";
+import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard, ChevronLeft, ChevronRight, Table, Code2, X, Columns2, Rows2 } from "lucide-react";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import ContextMenu from "./components/ContextMenu";
 import ConnectionManager from "./components/ConnectionManager";
@@ -9,7 +9,7 @@ import TableDataView from "./components/TableDataView";
 import QueryView from "./components/QueryView";
 import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./store/appStore";
-import type { ActiveConnection } from "./types";
+import type { ActiveConnection, Tab } from "./types";
 import SettingsModal, { type AppSettings, DEFAULT_QUERY_ROW_LIMIT } from "./components/SettingsModal";
 import EditTableModal, { type EditTableTarget } from "./components/EditTableModal";
 import DbLogo from "./components/DbLogo";
@@ -56,6 +56,14 @@ export default function App() {
   const [showConnManager, setShowConnManager] = useState(false);
   const [railCtx, setRailCtx] = useState<{ x: number; y: number; configId: string } | null>(null);
   const [logPanelWidth, setLogPanelWidth] = useState(320);
+  // Split view: pins one extra tab in a second pane next to the active one, for side-by-side
+  // comparison. Only one tab id, not a full second tab bar — switch it via the tab bar's
+  // "Open in Split View" context menu entry; closing it just returns that tab to the background.
+  const [splitTabId, setSplitTabId] = useState<string | null>(null);
+  const [splitOrientation, setSplitOrientation] = useState<"vertical" | "horizontal">("vertical");
+  const [splitSize, setSplitSize] = useState(420);
+  const [splitDragging, setSplitDragging] = useState(false);
+  const splitAreaRef = useRef<HTMLDivElement>(null);
   const [tableSettings, setTableSettings] = useState<
     Record<string, { pageSize: number; infiniteScroll: boolean }>
   >({});
@@ -183,6 +191,110 @@ export default function App() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
+
+  const handleSplitDividerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setSplitDragging(true);
+    const horizontal = splitOrientation === "horizontal";
+    const startPos = horizontal ? e.clientY : e.clientX;
+    const startSize = splitSize;
+    const onMove = (ev: MouseEvent) => {
+      // Dragging the divider up/left (negative delta) should grow the split pane, since it sits
+      // below/right of the divider — the reverse sign from the sidebar's own divider. Capped
+      // relative to the window size (not a fixed pixel value) so it never gets stuck well short
+      // of the available space on a large window.
+      const pos = horizontal ? ev.clientY : ev.clientX;
+      const maxSize = horizontal
+        ? Math.max(200, window.innerHeight - 260)
+        : Math.max(300, window.innerWidth - 420);
+      setSplitSize(Math.max(200, Math.min(maxSize, startSize - (pos - startPos))));
+    };
+    const onUp = () => {
+      setSplitDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // Keep the split pane pointed at a real, distinct tab — auto-close it if its tab was closed,
+  // or if it ends up matching the main pane's active tab (nothing useful to compare then).
+  useEffect(() => {
+    if (!splitTabId) return;
+    if (!store.tabs.some((t) => t.id === splitTabId) || splitTabId === store.activeTabId) {
+      setSplitTabId(null);
+    }
+  }, [splitTabId, store.tabs, store.activeTabId]);
+
+  // Resets the split pane to half of whichever axis it currently occupies (width for a
+  // side-by-side split, height for a stacked one), instead of carrying over a pixel size
+  // that was only ever dragged in for the other orientation.
+  const resetSplitSizeToHalf = (orientation: "vertical" | "horizontal") => {
+    const el = splitAreaRef.current;
+    if (!el) return;
+    const total = orientation === "horizontal" ? el.clientHeight : el.clientWidth;
+    if (total) setSplitSize(Math.round(total / 2));
+  };
+
+  const toggleSplitOrientation = () => {
+    setSplitOrientation((o) => {
+      const next = o === "vertical" ? "horizontal" : "vertical";
+      resetSplitSizeToHalf(next);
+      return next;
+    });
+  };
+
+  // Pinning a brand-new tab into an empty split pane starts it at 50% too; switching which
+  // tab is already shown there leaves whatever size the user dragged it to untouched.
+  const handleOpenSplit = (id: string) => {
+    const wasClosed = splitTabId === null;
+    setSplitTabId(id);
+    if (wasClosed) resetSplitSizeToHalf(splitOrientation);
+  };
+
+  const renderTabBody = (tab: Tab) => (
+    tab.type === "table" ? (
+      <TableDataView
+        configId={tab.connectionId}
+        database={tab.database}
+        table={tab.table!}
+        activeConnections={store.activeConnections}
+        addLog={store.addLog}
+        pageSize={tableSettings[tab.id]?.pageSize ?? 100}
+        onPageSizeChange={(size) => updateTableSetting(tab.id, { pageSize: size })}
+        infiniteScroll={tableSettings[tab.id]?.infiniteScroll ?? false}
+        onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
+        isDark={isDark}
+      />
+    ) : (
+      <QueryView
+        tabId={tab.id}
+        query={tab.query ?? ""}
+        database={tab.database}
+        databases={store.activeConnections.get(tab.connectionId)?.databases ?? []}
+        dbType={store.activeConnections.get(tab.connectionId)?.config.db_type ?? "mysql"}
+        schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
+        dbColumns={store.activeConnections.get(tab.connectionId)?.dbColumns ?? {}}
+        isDark={isDark}
+        queryRowLimit={settings.queryRowLimit ?? DEFAULT_QUERY_ROW_LIMIT}
+        onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
+        onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
+        onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
+        onRunQuery={(q, queryId) => store.executeQuery(tab.connectionId, tab.database, q, queryId)}
+        onCancelQuery={(queryId) => store.cancelQuery(queryId)}
+        onGetPrimaryKeys={(table) => store.getPrimaryKeys(tab.connectionId, tab.database, table)}
+        onMongoUpdate={(collection, idJson, field, valueJson) => store.mongoUpdateField(tab.connectionId, tab.database, collection, idJson, field, valueJson)}
+        onMongoDelete={(collection, idJsons) => store.mongoDeleteDocuments(tab.connectionId, tab.database, collection, idJsons)}
+        onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
+        onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}
+        onCommitTransaction={(txId) => store.commitTransaction(txId)}
+        onRollbackTransaction={(txId) => store.rollbackTransaction(txId)}
+      />
+    )
+  );
+
+  const splitTab = splitTabId ? store.tabs.find((t) => t.id === splitTabId) : undefined;
 
   return (
     <div className="flex h-screen bg-bg text-text-primary overflow-hidden">
@@ -312,6 +424,8 @@ export default function App() {
               onLocate={(tab) => { if (tab.type === "table" && tab.table) store.locateTable(tab.connectionId, tab.database, tab.table); }}
               onNewQuery={handleNewQuery}
               canNewQuery={!!store.activeDataSourceId && store.activeConnections.has(store.activeDataSourceId)}
+              onOpenSplit={handleOpenSplit}
+              splitTabId={splitTabId}
             />
           </div>
           <button
@@ -336,6 +450,10 @@ export default function App() {
         </div>
 
         <div className="flex flex-1 overflow-hidden">
+          {/* Main tab content + split pane — row (side by side) or column (stacked), depending
+              on splitOrientation. Kept as its own flex item so the log panel to the right of it
+              is unaffected by the split's orientation. */}
+          <div ref={splitAreaRef} className={`flex flex-1 overflow-hidden ${splitOrientation === "horizontal" ? "flex-col" : "flex-row"}`}>
           {/* Tab content — all open tabs stay mounted so switching back doesn't refetch */}
           <div className="flex-1 overflow-hidden relative">
             {!store.tabs.some((t) => t.id === store.activeTabId) && (
@@ -352,51 +470,63 @@ export default function App() {
               </div>
             )}
 
-            {store.tabs.map((tab) => (
+            {/* The tab pinned to the split pane is rendered exclusively over there instead —
+                skipped here so it isn't mounted twice at once. */}
+            {store.tabs.filter((tab) => tab.id !== splitTabId).map((tab) => (
               <div
                 key={tab.id}
                 className={`absolute inset-0 ${tab.id === store.activeTabId ? "" : "hidden"}`}
               >
-                {tab.type === "table" ? (
-                  <TableDataView
-                    configId={tab.connectionId}
-                    database={tab.database}
-                    table={tab.table!}
-                    activeConnections={store.activeConnections}
-                    addLog={store.addLog}
-                    pageSize={tableSettings[tab.id]?.pageSize ?? 100}
-                    onPageSizeChange={(size) => updateTableSetting(tab.id, { pageSize: size })}
-                    infiniteScroll={tableSettings[tab.id]?.infiniteScroll ?? false}
-                    onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
-                    isDark={isDark}
-                  />
-                ) : (
-                  <QueryView
-                    tabId={tab.id}
-                    query={tab.query ?? ""}
-                    database={tab.database}
-                    databases={store.activeConnections.get(tab.connectionId)?.databases ?? []}
-                    dbType={store.activeConnections.get(tab.connectionId)?.config.db_type ?? "mysql"}
-                    schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
-                    dbColumns={store.activeConnections.get(tab.connectionId)?.dbColumns ?? {}}
-                    isDark={isDark}
-                    queryRowLimit={settings.queryRowLimit ?? DEFAULT_QUERY_ROW_LIMIT}
-                    onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
-                    onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
-                    onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
-                    onRunQuery={(q, queryId) => store.executeQuery(tab.connectionId, tab.database, q, queryId)}
-                    onCancelQuery={(queryId) => store.cancelQuery(queryId)}
-                    onGetPrimaryKeys={(table) => store.getPrimaryKeys(tab.connectionId, tab.database, table)}
-                    onMongoUpdate={(collection, idJson, field, valueJson) => store.mongoUpdateField(tab.connectionId, tab.database, collection, idJson, field, valueJson)}
-                    onMongoDelete={(collection, idJsons) => store.mongoDeleteDocuments(tab.connectionId, tab.database, collection, idJsons)}
-                    onBeginTransaction={(db) => store.beginTransaction(tab.connectionId, db)}
-                    onExecuteInTransaction={(txId, q) => store.executeInTransaction(txId, q)}
-                    onCommitTransaction={(txId) => store.commitTransaction(txId)}
-                    onRollbackTransaction={(txId) => store.rollbackTransaction(txId)}
-                  />
-                )}
+                {renderTabBody(tab)}
               </div>
             ))}
+          </div>
+
+          {/* Split pane — a second, independently-scrollable view of one other open tab, for
+              side-by-side (or stacked) comparison against the active tab. */}
+          {splitTab && (
+            <>
+              <div
+                className={
+                  splitOrientation === "horizontal"
+                    ? `h-1 w-full cursor-row-resize hover:bg-highlight/40 transition-colors flex-shrink-0 ${splitDragging ? "bg-highlight/40" : "bg-border"}`
+                    : `w-1 cursor-col-resize hover:bg-highlight/40 transition-colors flex-shrink-0 ${splitDragging ? "bg-highlight/40" : "bg-border"}`
+                }
+                onMouseDown={handleSplitDividerMouseDown}
+              />
+              <div
+                className="flex flex-col overflow-hidden flex-shrink-0"
+                style={splitOrientation === "horizontal" ? { height: splitSize } : { width: splitSize }}
+              >
+                <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border bg-sidebar flex-shrink-0">
+                  <Columns2 size={12} className="text-blue-400 flex-shrink-0" />
+                  {splitTab.type === "table" ? (
+                    <Table size={12} className="text-blue-300 flex-shrink-0" />
+                  ) : (
+                    <Code2 size={12} className="text-highlight flex-shrink-0" />
+                  )}
+                  <span className="text-xs text-text-secondary truncate flex-1">{splitTab.title}</span>
+                  <button
+                    onClick={toggleSplitOrientation}
+                    title={splitOrientation === "vertical" ? "Stack split pane below" : "Place split pane side by side"}
+                    className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-accent transition-colors flex-shrink-0"
+                  >
+                    {splitOrientation === "vertical" ? <Rows2 size={13} /> : <Columns2 size={13} />}
+                  </button>
+                  <button
+                    onClick={() => setSplitTabId(null)}
+                    title="Close split view"
+                    className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-accent transition-colors flex-shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-hidden relative">
+                  {renderTabBody(splitTab)}
+                </div>
+              </div>
+            </>
+          )}
           </div>
 
           {/* SQL Log Panel */}
