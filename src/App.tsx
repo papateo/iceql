@@ -7,6 +7,7 @@ import ConnectionManager from "./components/ConnectionManager";
 import TabBar from "./components/TabBar";
 import TableDataView from "./components/TableDataView";
 import QueryView from "./components/QueryView";
+import MqttTopicView from "./components/MqttTopicView";
 import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./store/appStore";
 import type { ActiveConnection, Tab } from "./types";
@@ -285,6 +286,13 @@ export default function App() {
         onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
         isDark={isDark}
       />
+    ) : tab.type === "mqtt-topic" ? (
+      <MqttTopicView
+        connectionId={store.activeConnections.get(tab.connectionId)?.connectionId ?? ""}
+        topic={tab.topic ?? ""}
+        mqttRoot={store.activeConnections.get(tab.connectionId)?.mqttRoot}
+        onPublish={store.publishMqtt}
+      />
     ) : (
       <QueryView
         tabId={tab.id}
@@ -404,6 +412,7 @@ export default function App() {
             }}
             onDisconnect={store.disconnectFromDb}
             onDeleteConnection={store.deleteConnection}
+            onOpenMqttTopic={store.openMqttTopicTab}
           />
         </div>
 
@@ -442,7 +451,7 @@ export default function App() {
               onPromote={store.promoteTab}
               onLocate={(tab) => { if (tab.type === "table" && tab.table) store.locateTable(tab.connectionId, tab.database, tab.table); }}
               onNewQuery={handleNewQuery}
-              canNewQuery={!!store.activeDataSourceId && store.activeConnections.has(store.activeDataSourceId)}
+              canNewQuery={!!store.activeDataSourceId && store.activeConnections.get(store.activeDataSourceId)?.config.db_type !== "mqtt" && store.activeConnections.has(store.activeDataSourceId)}
               onOpenSplit={handleOpenSplit}
               splitTabId={splitTabId}
             />

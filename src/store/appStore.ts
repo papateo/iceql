@@ -1,5 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { v4 as uuidv4 } from "uuid";
 import type {
   ConnectionConfig,
@@ -9,7 +10,58 @@ import type {
   ColumnInfo,
   QueryResult,
   QueryLog,
+  MqttTopicNode,
+  MqttMessage,
 } from "../types";
+
+interface MqttMessageEvent {
+  connection_id: string;
+  topic: string;
+  payload_base64: string;
+  qos: number;
+  retain: boolean;
+  timestamp_ms: number;
+}
+
+const MQTT_MESSAGES_PER_TOPIC = 200;
+
+function emptyMqttNode(name: string, fullPath: string): MqttTopicNode {
+  return { name, fullPath, children: {}, messages: [], messageCount: 0 };
+}
+
+// Inserts a message into the tree at the exact topic path, creating intermediate nodes for any
+// path segments not seen before (immutably, so React re-renders only the changed branch).
+function insertMqttMessage(root: MqttTopicNode, topic: string, msg: MqttMessage): MqttTopicNode {
+  const segments = topic.split("/");
+  const recur = (node: MqttTopicNode, idx: number, path: string): MqttTopicNode => {
+    if (idx === segments.length) {
+      return {
+        ...node,
+        messages: [...node.messages, msg].slice(-MQTT_MESSAGES_PER_TOPIC),
+        messageCount: node.messageCount + 1,
+      };
+    }
+    const seg = segments[idx];
+    const childPath = path ? `${path}/${seg}` : seg;
+    const child = node.children[seg] ?? emptyMqttNode(seg, childPath);
+    return {
+      ...node,
+      children: { ...node.children, [seg]: recur(child, idx + 1, childPath) },
+    };
+  };
+  return recur(root, 0, "");
+}
+
+function base64ToUtf8(b64: string): string {
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return "";
+  }
+}
 
 // PostgreSQL folds unquoted identifiers to lowercase, so case-sensitive names (e.g. "BAGIAN")
 // only resolve when double-quoted. To let users write `select * from BAGIAN` without quotes,
@@ -172,6 +224,9 @@ export function useAppStore() {
     tableName: string;
     nonce: number;
   } | null>(null);
+  // One `mqtt-message` event listener per open MQTT connection, torn down on disconnect —
+  // a ref (not state) since it's plumbing, not something a render should react to.
+  const mqttUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
 
   const addLog = useCallback((log: Omit<QueryLog, "id" | "timestamp">) => {
     setQueryLogs((prev) => [
@@ -263,8 +318,55 @@ export function useAppStore() {
     setActiveDataSourceId(config.id);
   }, [activeConnections]);
 
+  // MQTT has no databases/tables to enumerate — connects, auto-subscribes to everything
+  // backend-side, then wires up an event listener that grows the topic tree as messages arrive.
+  const connectMqtt = useCallback(async (config: ConnectionConfig): Promise<string> => {
+    const connectionId = await invoke<string>("mqtt_connect", { config });
+    const ac: ActiveConnection = {
+      connectionId,
+      config,
+      databases: [],
+      expandedDbs: new Set(),
+      dbTables: {},
+      expandedTables: new Set(),
+      dbColumns: {},
+      dbErrors: {},
+      mqttRoot: emptyMqttNode("", ""),
+    };
+    setActiveConnections((prev) => {
+      const next = new Map(prev);
+      next.set(config.id, ac);
+      return next;
+    });
+    setSelectedConnectionId(config.id);
+    setActiveDataSourceId(config.id);
+
+    const unlisten = await listen<MqttMessageEvent>("mqtt-message", (event) => {
+      const p = event.payload;
+      if (p.connection_id !== connectionId) return;
+      const msg: MqttMessage = {
+        payload: base64ToUtf8(p.payload_base64),
+        qos: p.qos,
+        retain: p.retain,
+        timestampMs: p.timestamp_ms,
+      };
+      setActiveConnections((prev) => {
+        const conn = prev.get(config.id);
+        if (!conn?.mqttRoot) return prev;
+        const next = new Map(prev);
+        next.set(config.id, { ...conn, mqttRoot: insertMqttMessage(conn.mqttRoot, p.topic, msg) });
+        return next;
+      });
+    });
+    mqttUnlistenRef.current.set(config.id, unlisten);
+
+    return connectionId;
+  }, []);
+
   const connectToDb = useCallback(
     async (config: ConnectionConfig): Promise<string> => {
+      if (config.db_type === "mqtt") return connectMqtt(config);
+
       const connectionId = await invoke<string>("connect", { config });
       const databases = await invoke<string[]>("get_databases", {
         connectionId,
@@ -288,7 +390,7 @@ export function useAppStore() {
       setActiveDataSourceId(config.id);
       return connectionId;
     },
-    []
+    [connectMqtt]
   );
 
   const disconnectFromDb = useCallback(async (configId: string) => {
@@ -296,9 +398,15 @@ export function useAppStore() {
     setActiveConnections((prev) => {
       const ac = prev.get(configId);
       if (ac) {
-        invoke("disconnect", { connectionId: ac.connectionId }).catch(
-          console.error
-        );
+        if (ac.config.db_type === "mqtt") {
+          invoke("mqtt_disconnect", { connectionId: ac.connectionId }).catch(console.error);
+          mqttUnlistenRef.current.get(configId)?.();
+          mqttUnlistenRef.current.delete(configId);
+        } else {
+          invoke("disconnect", { connectionId: ac.connectionId }).catch(
+            console.error
+          );
+        }
       }
       const next = new Map(prev);
       next.delete(configId);
@@ -623,6 +731,40 @@ export function useAppStore() {
     []
   );
 
+  const openMqttTopicTab = useCallback((configId: string, topic: string) => {
+    const tabId = `${configId}:mqtt:${topic}`;
+    setTabs((prev) => {
+      if (prev.some((t) => t.id === tabId)) return prev;
+      const tab: Tab = {
+        id: tabId,
+        title: topic || "/",
+        type: "mqtt-topic",
+        connectionId: configId,
+        database: "",
+        topic,
+      };
+      return [...prev, tab];
+    });
+    setActiveTabId(tabId);
+    setActiveDataSourceId(configId);
+    setActiveTabByDs((m) => ({ ...m, [configId]: tabId }));
+  }, []);
+
+  const subscribeMqttTopic = useCallback(async (connectionId: string, topic: string, qos = 0) => {
+    await invoke("mqtt_subscribe", { connectionId, topic, qos });
+  }, []);
+
+  const unsubscribeMqttTopic = useCallback(async (connectionId: string, topic: string) => {
+    await invoke("mqtt_unsubscribe", { connectionId, topic });
+  }, []);
+
+  const publishMqtt = useCallback(
+    async (connectionId: string, topic: string, payload: string, qos = 0, retain = false) => {
+      await invoke("mqtt_publish", { connectionId, topic, payload, qos, retain });
+    },
+    []
+  );
+
   const closeTab = useCallback(
     (tabId: string) => {
       setTabs((prev) => {
@@ -851,6 +993,10 @@ export function useAppStore() {
     openTableTab,
     promoteTab,
     openQueryTab,
+    openMqttTopicTab,
+    subscribeMqttTopic,
+    unsubscribeMqttTopic,
+    publishMqtt,
     closeTab,
     reorderTabs,
     closeOtherTabs,

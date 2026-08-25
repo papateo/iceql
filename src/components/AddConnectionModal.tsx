@@ -19,6 +19,7 @@ const DEFAULTS: Record<DbType, Partial<ConnectionConfig>> = {
   csv: { host: "", port: 0, username: "", database: "", filename: "" },
   mongodb: { host: "localhost", port: 27017, username: "", database: "" },
   redis: { host: "localhost", port: 6379, username: "", database: "0" },
+  mqtt: { host: "localhost", port: 1883, username: "", database: "" },
 };
 
 const DEFAULT_SSH_TUNNEL: SshTunnelConfig = {
@@ -39,6 +40,7 @@ const DB_LABELS: Record<DbType, string> = {
   csv: "CSV",
   mongodb: "MongoDB",
   redis: "Redis",
+  mqtt: "MQTT",
 };
 
 export default function AddConnectionModal({ initial, onSave, onClose }: Props) {
@@ -178,17 +180,18 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
           <div>
             <label className="block text-text-secondary text-sm mb-1">Database Type</label>
             <div className="flex gap-2">
-              {(["postgresql", "mysql", "sqlite", "mongodb", "redis", "csv"] as DbType[]).map((t) => (
+              {(["postgresql", "mysql", "sqlite", "mongodb", "redis", "mqtt", "csv"] as DbType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => changeType(t)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  title={DB_LABELS[t]}
+                  className={`flex-1 py-2.5 rounded-lg border transition-colors flex items-center justify-center ${
                     form.db_type === t
-                      ? "bg-highlight border-highlight text-white"
-                      : "bg-accent border-border text-text-secondary hover:text-text-primary"
+                      ? "bg-highlight border-highlight"
+                      : "bg-accent border-border hover:border-highlight/50"
                   }`}
                 >
-                  {DB_LABELS[t]}
+                  <DbLogo type={t} size={18} />
                 </button>
               ))}
             </div>
@@ -291,13 +294,13 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
 
               <div>
                 <label className="block text-text-secondary text-sm mb-1">
-                  {form.db_type === "mongodb" ? "Auth Database (optional)" : form.db_type === "redis" ? "Database Number" : "Database"}
+                  {form.db_type === "mongodb" ? "Auth Database (optional)" : form.db_type === "redis" ? "Database Number" : form.db_type === "mqtt" ? "Client ID (optional)" : "Database"}
                 </label>
                 <input
                   className="w-full bg-accent border border-border rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-highlight"
                   value={form.database}
                   onChange={(e) => set("database", e.target.value)}
-                  placeholder={form.db_type === "mongodb" ? "admin" : DEFAULTS[form.db_type].database}
+                  placeholder={form.db_type === "mongodb" ? "admin" : form.db_type === "mqtt" ? "auto-generated" : DEFAULTS[form.db_type].database}
                 />
                 {form.db_type === "mongodb" && (
                   <p className="text-text-muted text-xs mt-1.5">
@@ -309,12 +312,18 @@ export default function AddConnectionModal({ initial, onSave, onClose }: Props) 
                     Redis databases are numbered (0-15 by default), not named. All numbered databases are browsable after connecting.
                   </p>
                 )}
+                {form.db_type === "mqtt" && (
+                  <p className="text-text-muted text-xs mt-1.5">
+                    Leave blank to generate a random client id. All topics are discovered automatically after connecting.
+                  </p>
+                )}
               </div>
             </>
           )}
 
-          {/* SSH Tunnel — only meaningful for network databases, not local files */}
-          {!isSqlite && !isCsv && (
+          {/* SSH Tunnel — only meaningful for network databases, not local files or MQTT
+              (not wired up on the backend for MQTT connections yet) */}
+          {!isSqlite && !isCsv && form.db_type !== "mqtt" && (
             <div className="border border-border rounded-lg overflow-hidden">
               <button
                 type="button"

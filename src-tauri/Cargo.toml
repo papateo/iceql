@@ -49,6 +49,8 @@ bson = { version = "2", features = ["chrono-0_4"] }
 futures-util = "0.3"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 russh = "0.63"
+rumqttc = "0.25.1"
+base64 = "0.23.1"
 
 [features]
 default = ["custom-protocol"]

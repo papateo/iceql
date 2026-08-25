@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { X, Table, Code2, Plus, Crosshair, Columns2 } from "lucide-react";
+import { X, Table, Code2, Plus, Crosshair, Columns2, Hash } from "lucide-react";
 import type { Tab } from "../types";
 
 interface Props {
@@ -232,6 +232,8 @@ export default function TabBar({
                 <Table size={13} className={`block group-hover:hidden ${isActive ? "text-blue-300" : "text-text-muted"}`} />
                 <Crosshair size={13} className={`hidden group-hover:block ${isActive ? "text-blue-300" : "text-text-muted"} hover:text-highlight transition-colors`} />
               </button>
+            ) : tab.type === "mqtt-topic" ? (
+              <Hash size={13} className={isActive ? "text-fuchsia-400" : "text-text-muted"} />
             ) : (
               <Code2 size={13} className={isActive ? "text-highlight" : "text-text-muted"} />
             )}

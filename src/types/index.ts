@@ -1,4 +1,4 @@
-export type DbType = "postgresql" | "mysql" | "sqlite" | "csv" | "mongodb" | "redis";
+export type DbType = "postgresql" | "mysql" | "sqlite" | "csv" | "mongodb" | "redis" | "mqtt";
 
 export interface SshTunnelConfig {
   enabled: boolean;
@@ -49,7 +49,7 @@ export interface DatabaseNode {
   expanded: boolean;
 }
 
-export type TabType = "table" | "query";
+export type TabType = "table" | "query" | "mqtt-topic";
 
 export interface Tab {
   id: string;
@@ -59,8 +59,26 @@ export interface Tab {
   database: string;
   table?: string;
   query?: string;
+  topic?: string; // for "mqtt-topic" tabs
   /** Preview (temporary) tab — opened via single click, replaced by the next single click. */
   preview?: boolean;
+}
+
+// MQTT has no schema to browse up front — topics are discovered only as messages arrive, so
+// the tree below is built and owned entirely client-side from the live message stream.
+export interface MqttMessage {
+  payload: string; // decoded as UTF-8 (lossy) for display
+  qos: number;
+  retain: boolean;
+  timestampMs: number;
+}
+
+export interface MqttTopicNode {
+  name: string; // this path segment only, e.g. "livingroom"
+  fullPath: string; // e.g. "home/livingroom"
+  children: Record<string, MqttTopicNode>;
+  messages: MqttMessage[]; // history for messages published to this exact topic, newest last
+  messageCount: number; // total ever received at this exact topic (messages[] is capped)
 }
 
 export interface QueryLog {
@@ -84,4 +102,5 @@ export interface ActiveConnection {
   expandedTables: Set<string>;
   dbColumns: Record<string, ColumnInfo[]>; // key: db.table
   dbErrors: Record<string, string>; // key: dbName → error message
+  mqttRoot?: MqttTopicNode; // MQTT only — root of the live topic tree
 }

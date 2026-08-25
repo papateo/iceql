@@ -1,4 +1,4 @@
-import { SiPostgresql, SiMysql, SiSqlite, SiMongodb, SiRedis } from "react-icons/si";
+import { SiPostgresql, SiMysql, SiSqlite, SiMongodb, SiRedis, SiMqtt } from "react-icons/si";
 import { Database, FileSpreadsheet } from "lucide-react";
 import type { IconType } from "react-icons";
 
@@ -10,6 +10,7 @@ const BRAND_ICONS: Partial<Record<string, IconType>> = {
   sqlite: SiSqlite,
   mongodb: SiMongodb,
   redis: SiRedis,
+  mqtt: SiMqtt,
 };
 
 // Matches the color convention already used across ConnectionsPanel/ConnectionManager.
@@ -20,6 +21,7 @@ const COLORS: Record<string, string> = {
   mongodb: "text-emerald-500",
   redis: "text-red-500",
   csv: "text-yellow-400",
+  mqtt: "text-fuchsia-500",
 };
 
 export default function DbLogo({ type, size = 16, className = "" }: { type: string; size?: number; className?: string }) {

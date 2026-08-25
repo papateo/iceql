@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod models;
+mod mqtt;
 mod persistence;
 mod ssh_tunnel;
 
@@ -16,6 +17,10 @@ pub type ConnectionStore = Arc<Mutex<HashMap<String, ConnectionPool>>>;
 // tunnel (if any) alive for as long as the connection is open. Dropping an entry (on
 // disconnect) tears the tunnel down.
 pub type TunnelStore = Arc<Mutex<HashMap<String, ssh_tunnel::SshTunnel>>>;
+
+// Keyed by connection id — holds each open MQTT connection alive and lets commands reach its
+// client to subscribe/unsubscribe/publish.
+pub type MqttStore = Arc<Mutex<HashMap<String, mqtt::MqttConnection>>>;
 
 // Tracks the abort handle for each in-flight query, keyed by the frontend-generated
 // query id, so a running query can be cancelled from a separate command invocation.
@@ -35,6 +40,7 @@ pub fn run() {
     let transaction_store = TransactionStore::new();
     let query_task_store: QueryTaskStore = Arc::new(Mutex::new(HashMap::new()));
     let tunnel_store: TunnelStore = Arc::new(Mutex::new(HashMap::new()));
+    let mqtt_store: MqttStore = Arc::new(Mutex::new(HashMap::new()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -45,6 +51,7 @@ pub fn run() {
         .manage(transaction_store)
         .manage(query_task_store)
         .manage(tunnel_store)
+        .manage(mqtt_store)
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -118,6 +125,11 @@ pub fn run() {
             commands::mongo_delete_documents,
             commands::redis_update_field,
             commands::redis_delete_keys,
+            commands::mqtt_connect,
+            commands::mqtt_disconnect,
+            commands::mqtt_subscribe,
+            commands::mqtt_unsubscribe,
+            commands::mqtt_publish,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

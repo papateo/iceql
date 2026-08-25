@@ -1,8 +1,10 @@
 use crate::db::ConnectionPool;
 use crate::models::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
+use crate::mqtt;
 use crate::persistence;
 use crate::ssh_tunnel;
 use crate::ConnectionStore;
+use crate::MqttStore;
 use crate::QueryTaskStore;
 use crate::TransactionStore;
 use crate::TunnelStore;
@@ -10,6 +12,10 @@ use uuid::Uuid;
 
 #[tauri::command]
 pub async fn test_connection(config: ConnectionConfig) -> Result<(), String> {
+    // MQTT has no ConnectionPool/SSH-tunnel story of its own yet — a direct connect attempt.
+    if config.db_type == "mqtt" {
+        return mqtt::test_connection(&config).await;
+    }
     // The tunnel (if any) only needs to live for the duration of this test — dropped at the
     // end of the function, which tears it down.
     let (effective_config, _tunnel) = ssh_tunnel::resolve_effective_config(&config).await?;
@@ -368,4 +374,76 @@ pub async fn redis_delete_keys(
         .get(&connection_id)
         .ok_or_else(|| "Connection not found".to_string())?;
     pool.redis_delete_keys(&database, &keys).await
+}
+
+#[tauri::command]
+pub async fn mqtt_connect(
+    config: ConnectionConfig,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MqttStore>,
+) -> Result<String, String> {
+    let connection_id = Uuid::new_v4().to_string();
+    let conn = mqtt::connect(app, connection_id.clone(), &config).await?;
+    state.lock().await.insert(connection_id.clone(), conn);
+    Ok(connection_id)
+}
+
+#[tauri::command]
+pub async fn mqtt_disconnect(
+    connection_id: String,
+    state: tauri::State<'_, MqttStore>,
+) -> Result<(), String> {
+    let mut store = state.lock().await;
+    if let Some(conn) = store.remove(&connection_id) {
+        let _ = conn.client.disconnect().await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mqtt_subscribe(
+    connection_id: String,
+    topic: String,
+    qos: u8,
+    state: tauri::State<'_, MqttStore>,
+) -> Result<(), String> {
+    let store = state.lock().await;
+    let conn = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    let qos = mqtt::qos_from_u8(qos);
+    conn.client.subscribe(topic, qos).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn mqtt_unsubscribe(
+    connection_id: String,
+    topic: String,
+    state: tauri::State<'_, MqttStore>,
+) -> Result<(), String> {
+    let store = state.lock().await;
+    let conn = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    conn.client.unsubscribe(topic).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn mqtt_publish(
+    connection_id: String,
+    topic: String,
+    payload: String,
+    qos: u8,
+    retain: bool,
+    state: tauri::State<'_, MqttStore>,
+) -> Result<(), String> {
+    let store = state.lock().await;
+    let conn = store
+        .get(&connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    let qos = mqtt::qos_from_u8(qos);
+    conn.client
+        .publish(topic, qos, retain, payload.into_bytes())
+        .await
+        .map_err(|e| e.to_string())
 }

@@ -6,7 +6,7 @@ import type { ConnectionConfig, ActiveConnection, DbType } from "../types";
 import AddConnectionModal from "./AddConnectionModal";
 import DbLogo from "./DbLogo";
 
-const VALID_DB_TYPES: DbType[] = ["postgresql", "mysql", "sqlite", "csv", "mongodb", "redis"];
+const VALID_DB_TYPES: DbType[] = ["postgresql", "mysql", "sqlite", "csv", "mongodb", "redis", "mqtt"];
 
 interface Props {
   savedConnections: ConnectionConfig[];

@@ -16,6 +16,7 @@ import {
   Pin,
   PinOff,
   Unplug,
+  Hash,
 } from "lucide-react";
 
 const PINNED_KEY = "iceql-pinned-tables";
@@ -38,6 +39,7 @@ function savePinned(items: PinnedTable[]) {
 import type { ConnectionConfig, ActiveConnection } from "../types";
 import ContextMenu, { type ContextMenuEntry } from "./ContextMenu";
 import DbLogo from "./DbLogo";
+import MqttTopicTree from "./MqttTopicTree";
 
 interface Props {
   savedConnections: ConnectionConfig[];
@@ -51,6 +53,7 @@ interface Props {
   locateTarget: { configId: string; dbName: string; tableName: string; nonce: number } | null;
   onDisconnect?: (configId: string) => void;
   onDeleteConnection?: (configId: string) => void;
+  onOpenMqttTopic: (configId: string, topic: string) => void;
 }
 
 interface CtxState {
@@ -71,6 +74,7 @@ export default function ConnectionsPanel({
   locateTarget,
   onDisconnect,
   onDeleteConnection,
+  onOpenMqttTopic,
 }: Props) {
   // The table currently being revealed via "Show in structure" (briefly highlighted).
   const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null);
@@ -200,14 +204,30 @@ export default function ConnectionsPanel({
           className="w-full flex items-center gap-1 pl-5 pr-3 py-1 text-[11px] font-semibold text-text-muted hover:text-text-secondary transition-colors"
         >
           {structureOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <Database size={12} className="text-yellow-400" />
-          <span className="flex-1 text-left">Structure</span>
-          {ac && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-text-muted">{ac.databases.length}</span>}
+          {activeConn.db_type === "mqtt" ? (
+            <Hash size={12} className="text-fuchsia-400" />
+          ) : (
+            <Database size={12} className="text-yellow-400" />
+          )}
+          <span className="flex-1 text-left">{activeConn.db_type === "mqtt" ? "Topics" : "Structure"}</span>
+          {ac && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-text-muted">
+              {activeConn.db_type === "mqtt" ? Object.keys(ac.mqttRoot?.children ?? {}).length : ac.databases.length}
+            </span>
+          )}
         </button>
       </div>
       {structureOpen && (
         <div className="flex-1 overflow-y-auto py-1">
-          {ac ? (
+          {!ac ? (
+            <div className="px-3 py-6 text-xs text-text-muted text-center">This connection is not active.</div>
+          ) : activeConn.db_type === "mqtt" ? (
+            ac.mqttRoot && Object.keys(ac.mqttRoot.children).length > 0 ? (
+              <MqttTopicTree node={ac.mqttRoot} depth={0} configId={activeConn.id} onOpenTopic={onOpenMqttTopic} />
+            ) : (
+              <div className="px-3 py-6 text-xs text-text-muted text-center">Waiting for messages…</div>
+            )
+          ) : (
             ac.databases.map((dbName) => (
               <DatabaseNode
                 key={dbName}
@@ -228,8 +248,6 @@ export default function ConnectionsPanel({
                 onUnpin={unpinTable}
               />
             ))
-          ) : (
-            <div className="px-3 py-6 text-xs text-text-muted text-center">This connection is not active.</div>
           )}
         </div>
       )}
