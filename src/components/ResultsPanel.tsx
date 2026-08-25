@@ -33,6 +33,10 @@ interface Props {
   onMongoDelete: (collection: string, idJsons: string[]) => Promise<number>;
   onMongoRefresh: () => Promise<void>;
   isDark: boolean;
+  // True row count behind a page the safety limit truncated — null when not applicable (the
+  // query returned its full result already) or not yet known (background COUNT(*) in flight).
+  totalRowCount?: number | null;
+  totalRowCountLoading?: boolean;
 }
 
 interface EditCell {
@@ -59,7 +63,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh, isDark }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh, isDark, totalRowCount, totalRowCountLoading }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -454,6 +458,10 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
         <div className="flex items-center gap-1 text-text-secondary">
           <Hash size={12} />
           <span>{result.row_count} rows</span>
+          {totalRowCountLoading && <span className="text-text-muted italic">· counting total…</span>}
+          {!totalRowCountLoading && totalRowCount != null && totalRowCount !== result.row_count && (
+            <span className="text-text-muted">· {totalRowCount.toLocaleString()} total</span>
+          )}
         </div>
         <div className="flex items-center gap-1 text-text-secondary">
           <Clock size={12} />

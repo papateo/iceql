@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import SqlEditor from "./SqlEditor";
 import MongoQueryEditor from "./MongoQueryEditor";
 import RedisQueryEditor from "./RedisQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
-import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase, maybeInjectLimit, buildPagedQuery } from "../utils/sql";
+import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase, maybeInjectLimit, buildPagedQuery, buildCountQuery } from "../utils/sql";
 import { parseMongoCollection } from "../utils/mongo";
 
 const QUERY_PAGE_SIZE_OPTIONS = [100, 500, 1000, 5000] as const;
@@ -57,6 +57,13 @@ export default function QueryView({
   // query (Run/Cmd+Enter) always resets it back to that default; only Prev/Next/page-size clicks
   // carry a chosen size forward across re-runs of the same query.
   const [activeLimit, setActiveLimit] = useState(queryRowLimit);
+  // True row count behind a truncated page — null until known. Filled in for free when the
+  // current page comes back short (that IS the end, no extra query needed); otherwise fetched
+  // via a background COUNT(*) that doesn't block the grid from rendering the page it already has.
+  const [totalRowCount, setTotalRowCount] = useState<number | null>(null);
+  const [totalRowCountLoading, setTotalRowCountLoading] = useState(false);
+  // Guards the background COUNT(*) against resolving after a newer run has already started.
+  const runTokenRef = useRef(0);
   const [rowIds, setRowIds] = useState<string[] | null>(null);
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
   const [editorHeight, setEditorHeight] = useState(240);
@@ -139,8 +146,11 @@ export default function QueryView({
 
   const runQuery = async (q: string, pageOpts?: { offset?: number; showAll?: boolean; limit?: number }) => {
     if (!q.trim()) return;
+    const myToken = ++runTokenRef.current;
     setLoading(true);
     setError(null);
+    setTotalRowCount(null);
+    setTotalRowCountLoading(false);
     try {
       const useCtid = dbType === "postgresql" && parseEditableTable(q) !== null;
       const withCtid = useCtid ? injectCtid(q) : q;
@@ -173,6 +183,30 @@ export default function QueryView({
       setActiveLimit(limit);
       setQueryOffset(offset);
       setShowingAll(showAll);
+
+      if (showAll) {
+        setTotalRowCount(res.rows.length);
+      } else if (limited) {
+        if (res.rows.length < limit) {
+          // A short page means we've already reached the actual end — the exact total is
+          // just what we've seen so far, no extra query needed.
+          setTotalRowCount(offset + res.rows.length);
+        } else {
+          setTotalRowCountLoading(true);
+          onRunQuery(buildCountQuery(q), uuidv4())
+            .then((countRes) => {
+              if (runTokenRef.current !== myToken) return; // a newer run superseded this one
+              const total = Number(countRes.rows[0]?.[0]);
+              setTotalRowCount(Number.isFinite(total) ? total : null);
+            })
+            .catch(() => {
+              // Best-effort — the page itself already rendered fine without a total.
+            })
+            .finally(() => {
+              if (runTokenRef.current === myToken) setTotalRowCountLoading(false);
+            });
+        }
+      }
 
       // The backend has no persistent session — it just runs each query against whatever
       // database the tab currently points at. Mirror a successful `USE db;` into the tab's
@@ -369,6 +403,8 @@ export default function QueryView({
           onMongoDelete={onMongoDelete}
           onMongoRefresh={handleMongoRefresh}
           isDark={isDark}
+          totalRowCount={totalRowCount}
+          totalRowCountLoading={totalRowCountLoading}
         />
       </div>
 

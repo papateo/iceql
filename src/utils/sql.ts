@@ -227,6 +227,14 @@ export function maybeInjectLimit(query: string, limit: number): string {
   return `${trimmed} LIMIT ${limit}`;
 }
 
+// Wraps an arbitrary SELECT/WITH query to count its full, untruncated result set — used to show
+// "N total" after the safety limit (or a manual page) only fetched part of it. Only called on a
+// query already confirmed eligible for that limit (plain SELECT/WITH, no LIMIT of its own).
+export function buildCountQuery(query: string): string {
+  const trimmed = query.trim().replace(/;\s*$/, "");
+  return `SELECT COUNT(*) AS __iceql_total__ FROM (${trimmed}) AS __iceql_count_sub__`;
+}
+
 // Pages through a query the safety limit (see maybeInjectLimit) truncated — only ever called on
 // a query already confirmed eligible for that limit (plain SELECT/WITH, no existing LIMIT), so
 // appending our own LIMIT/OFFSET here is always safe.
