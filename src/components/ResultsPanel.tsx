@@ -51,6 +51,19 @@ const CELL_MIN_W = 80;
 const CELL_MAX_W = 320;
 const CELL_PAD = 28;
 const RESIZE_MIN_W = 50;
+// Cell text renders as font-mono at text-xs (12px) — kept in sync with the classes on the cell
+// display div/input below. Used for double-click auto-fit, which needs the real rendered width
+// rather than baseColWidths' char-count estimate (fine as a rough initial default, but not
+// precise enough for an explicit "fit to content" — long values could end up truncated).
+const CELL_FONT = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+const AUTOFIT_MAX_W = 640;
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function measureTextWidth(text: string): number {
+  if (measureCtx === undefined) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return text.length * CELL_CHAR_W;
+  measureCtx.font = CELL_FONT;
+  return measureCtx.measureText(text).width;
+}
 
 function displayValue(val: unknown) {
   if (val === null || val === undefined)
@@ -301,6 +314,23 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, [columnVirtualizer]);
+
+  // Double-click a resize handle to size a column to exactly fit its content, measured with
+  // canvas (not baseColWidths' rough char-count estimate) so nothing ends up truncated.
+  const autoFitColumn = useCallback((col: string, index: number) => {
+    const sampleSize = Math.min(data.length, 2000);
+    let maxWidth = measureTextWidth(col);
+    for (let r = 0; r < sampleSize; r++) {
+      const v = data[r][col];
+      const str = v === null || v === undefined ? "NULL" : typeof v === "object" ? JSON.stringify(v) : String(v);
+      const w = measureTextWidth(str);
+      if (w > maxWidth) maxWidth = w;
+    }
+    const newWidth = Math.min(AUTOFIT_MAX_W, Math.max(CELL_MIN_W, Math.ceil(maxWidth) + CELL_PAD));
+    setColWidthOverrides((prev) => new Map(prev).set(col, newWidth));
+    columnVirtualizer.resizeItem(index, newWidth);
+  }, [data, columnVirtualizer]);
+
   const virtualColumns = columnVirtualizer.getVirtualItems();
 
   const startEdit = (rowIdx: number, col: string) => {
@@ -605,6 +635,8 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                   <div
                     onMouseDown={(e) => startColumnResize(e, col, i, colWidths[i])}
                     onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => { e.stopPropagation(); autoFitColumn(col, i); }}
+                    title="Drag to resize · double-click to auto-fit"
                     className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-highlight/60 active:bg-highlight"
                   />
                 </div>
