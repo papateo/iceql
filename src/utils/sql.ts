@@ -81,6 +81,38 @@ export function buildUpdateStatements(
   return sqls;
 }
 
+// Build INSERT statements for newly-added (not-yet-persisted) rows.
+// `edits`: the same "rowIdx:col" -> value map editing uses — only columns the user actually
+// filled in are included, so id/auto-increment/defaulted columns are left for the DB to fill.
+// `newRowIndices`: which row indices in `rows` are pending inserts (vs. edits on existing rows).
+export function buildInsertStatements(
+  dbType: string | undefined,
+  database: string,
+  table: string,
+  rows: Record<string, unknown>[],
+  edits: Map<string, unknown>,
+  newRowIndices: number[]
+): string[] {
+  const qi = (name: string) => quoteIdent(dbType, name);
+  return newRowIndices.map((rowIdx) => {
+    const prefix = `${rowIdx}:`;
+    const fields: [string, unknown][] = [];
+    edits.forEach((value, key) => {
+      if (!key.startsWith(prefix)) return;
+      fields.push([key.slice(prefix.length), value]);
+    });
+    if (fields.length === 0) {
+      // A row added but left entirely blank — insert an all-default row.
+      return dbType === "mysql"
+        ? `INSERT INTO ${tableRef(dbType, database, table)} () VALUES ()`
+        : `INSERT INTO ${tableRef(dbType, database, table)} DEFAULT VALUES`;
+    }
+    const colList = fields.map(([col]) => qi(col)).join(", ");
+    const valList = fields.map(([, val]) => sqlLiteral(val)).join(", ");
+    return `INSERT INTO ${tableRef(dbType, database, table)} (${colList}) VALUES (${valList})`;
+  });
+}
+
 // Build DELETE statements for a set of selected row indices.
 export function buildDeleteStatements(
   dbType: string | undefined,

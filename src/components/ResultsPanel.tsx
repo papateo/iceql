@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { v4 as uuidv4, v7 as uuidv7 } from "uuid";
 import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Pencil, Eye, Download, X, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Table2, Braces } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -802,6 +803,10 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
           onSetDefault={() => {
             const def = columnDefaults[editingCell.col];
             setEditingCell((prev) => prev ? { ...prev, value: def ?? null } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+          onGenerateUuid={(version) => {
+            setEditingCell((prev) => prev ? { ...prev, value: version === "v4" ? uuidv4() : uuidv7() } : null);
             setTimeout(() => inputRef.current?.focus(), 0);
           }}
         />

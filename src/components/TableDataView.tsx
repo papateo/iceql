@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
-import { v4 as uuidv4 } from "uuid";
+import { v4 as uuidv4, v7 as uuidv7 } from "uuid";
 import {
   RefreshCw,
   Loader2,
@@ -20,6 +20,7 @@ import {
   Table2,
   Braces,
   PenLine,
+  Plus,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -29,7 +30,7 @@ import { json } from "@codemirror/lang-json";
 import { dracula } from "@uiw/codemirror-theme-dracula";
 import { EditorView } from "@codemirror/view";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
-import { tableRef, buildUpdateStatements, buildDeleteStatements, sqlLiteral, quoteIdent } from "../utils/sql";
+import { tableRef, buildUpdateStatements, buildDeleteStatements, buildInsertStatements, sqlLiteral, quoteIdent } from "../utils/sql";
 import { buildMongoUpdatePreview } from "../utils/mongo";
 import { buildRedisUpdatePreview } from "../utils/redis";
 import EditCellCtxMenu from "./EditCellCtxMenu";
@@ -298,6 +299,9 @@ export default function TableDataView({
 
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
+  // A newly-added, not-yet-committed row (RDBMS only) — always the last row in `rows` while
+  // pending. Only one at a time, so index bookkeeping on discard/commit stays simple.
+  const [newRowIndex, setNewRowIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
@@ -452,6 +456,9 @@ export default function TableDataView({
     return map;
   }, [ac, database, table]);
   const hasEdits = edits.size > 0;
+  // A pending new row still counts even with zero edited cells (it'll insert an all-default
+  // row), so the commit/revert toolbar needs its own, broader check.
+  const hasPendingChanges = hasEdits || newRowIndex !== null;
   const hasMore = rows.length < totalCount;
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
   const currentPage = loadedPages - 1;
@@ -463,6 +470,7 @@ export default function TableDataView({
     setError(null);
     setEdits(new Map());
     setEditingCell(null);
+    setNewRowIndex(null);
     setSelectedRows(new Set());
     setRows([]);
     setLoadedPages(0);
@@ -572,7 +580,49 @@ export default function TableDataView({
     setEditingCell(null);
   };
 
-  const revertAll = () => { setEdits(new Map()); setEditingCell(null); setError(null); };
+  const revertAll = () => {
+    setEdits(new Map());
+    setEditingCell(null);
+    setError(null);
+    // A pending new row was never persisted — drop it (it's always the last row) rather than
+    // leaving a blank row sitting in the grid with nothing to "revert" it to.
+    if (newRowIndex !== null) {
+      setRows((prev) => prev.slice(0, -1));
+      setNewRowIndex(null);
+    }
+  };
+
+  // Removes just the pending new row (and only its own edits), leaving any edits on existing
+  // rows untouched — unlike Revert, which discards everything.
+  const discardNewRow = () => {
+    if (newRowIndex === null) return;
+    const prefix = `${newRowIndex}:`;
+    setEdits((prev) => {
+      const next = new Map(prev);
+      for (const key of next.keys()) if (key.startsWith(prefix)) next.delete(key);
+      return next;
+    });
+    setRows((prev) => prev.slice(0, -1));
+    setEditingCell((prev) => (prev?.rowIdx === newRowIndex ? null : prev));
+    setNewRowIndex(null);
+  };
+
+  // Appends a blank row for the user to fill in — inserted on Commit. Only RDBMS dialects
+  // (not Mongo/Redis) go through this; only one pending new row at a time keeps every other
+  // index-based lookup (edits, selection, sort) unambiguous.
+  const handleAddRow = () => {
+    if (newRowIndex !== null) return;
+    const blank: Record<string, unknown> = {};
+    columns.forEach((c) => { blank[c] = null; });
+    const idx = rows.length;
+    setRows((prev) => [...prev, blank]);
+    setNewRowIndex(idx);
+    setSelectedRows(new Set());
+    if (visibleColumns.length > 0) setEditingCell({ rowIdx: idx, col: visibleColumns[0], value: null });
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    });
+  };
 
   const rowHasEdits = (rowIdx: number) => {
     const prefix = `${rowIdx}:`;
@@ -592,8 +642,23 @@ export default function TableDataView({
     });
   };
 
+  // Edits on the pending new row are its INSERT's values, not an UPDATE on an existing row —
+  // keep them out of the update set.
+  const existingRowEdits = useMemo(() => {
+    if (newRowIndex === null) return edits;
+    const prefix = `${newRowIndex}:`;
+    const filtered = new Map(edits);
+    for (const key of filtered.keys()) if (key.startsWith(prefix)) filtered.delete(key);
+    return filtered;
+  }, [edits, newRowIndex]);
+
   const buildUpdateSQL = (): string[] =>
-    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, edits, undefined, primaryKeys);
+    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, existingRowEdits, undefined, primaryKeys);
+
+  const buildInsertSQL = (): string[] =>
+    newRowIndex === null
+      ? []
+      : buildInsertStatements(ac?.config.db_type, database, table, rows, edits, [newRowIndex]);
 
   const buildMongoPreview = (): string[] => buildMongoUpdatePreview(table, rows, edits);
   const buildRedisPreview = (): string[] => buildRedisUpdatePreview(rows, edits);
@@ -654,10 +719,10 @@ export default function TableDataView({
   };
 
   const commitAll = async () => {
-    if (!ac || !hasEdits) return;
+    if (!ac || !hasPendingChanges) return;
     if (isMongo) return commitAllMongo();
     if (isRedis) return commitAllRedis();
-    const sqls = buildUpdateSQL();
+    const sqls = [...buildInsertSQL(), ...buildUpdateSQL()];
     setLoading(true);
     setError(null);
     try {
@@ -722,7 +787,14 @@ export default function TableDataView({
     if (!ac || selectedRows.size === 0) return;
     if (isMongo) return handleDeleteMongo();
     if (isRedis) return handleDeleteRedis();
-    const indices = [...selectedRows].sort((a, b) => a - b);
+    // A pending new row has nothing in the DB to DELETE yet — drop it locally instead.
+    const indices = [...selectedRows].filter((i) => i !== newRowIndex).sort((a, b) => a - b);
+    if (selectedRows.has(newRowIndex as number)) discardNewRow();
+    if (indices.length === 0) {
+      setSelectedRows(new Set());
+      setShowDeleteConfirm(false);
+      return;
+    }
     const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices, undefined, primaryKeys);
     setDeleting(true);
     setError(null);
@@ -862,6 +934,9 @@ export default function TableDataView({
       if (!val) return;
       const lower = val.toLowerCase();
       r = r.filter((row) => {
+        // A pending new row is blank by definition — don't let an unrelated filter hide it
+        // out from under the user while they're still filling it in.
+        if (row.__idx === newRowIndex) return true;
         const v = row[col];
         if (v === null || v === undefined) return false;
         return String(v).toLowerCase().includes(lower);
@@ -870,7 +945,7 @@ export default function TableDataView({
     // Sorting is applied server-side (ORDER BY across the whole table), so rows arrive
     // already ordered — only client-side filtering of the loaded rows happens here.
     return r;
-  }, [rows, filters]);
+  }, [rows, filters, newRowIndex]);
 
   // Fixed per-column pixel widths, sampled from the loaded rows. Needed because div-based
   // virtualized rows can't rely on <table>'s automatic cross-row column sizing. Kept separate
@@ -1005,6 +1080,16 @@ export default function TableDataView({
             </>
           )}
         </div>
+        {!isDocStore && (
+          <button
+            onClick={handleAddRow}
+            disabled={newRowIndex !== null}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-text-muted hover:text-text-primary hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={newRowIndex !== null ? "Finish or discard the current new row first" : "Add a new row"}
+          >
+            <Plus size={13} /> Add Row
+          </button>
+        )}
         {isDocStore && (
           <div className="flex items-center bg-accent/60 border border-border rounded-lg p-0.5">
             <button
@@ -1024,7 +1109,7 @@ export default function TableDataView({
           </div>
         )}
         <div className="flex-1" />
-        {!hasEdits && totalCount > 0 && (
+        {!hasPendingChanges && totalCount > 0 && (
           <span className="text-text-muted text-xs">
             {rows.length.toLocaleString()} / {totalCount.toLocaleString()} rows · {execMs}ms
           </span>
@@ -1032,7 +1117,7 @@ export default function TableDataView({
         {selectedRows.size > 0 && (
           <span className="text-highlight text-xs">{selectedRows.size} selected</span>
         )}
-        {selectedRows.size > 0 && !hasEdits && (
+        {selectedRows.size > 0 && !hasPendingChanges && (
           <button
             onClick={() => setShowDeleteConfirm(true)}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-red-400 hover:bg-red-500/10 transition-colors text-xs"
@@ -1042,7 +1127,7 @@ export default function TableDataView({
             Delete {selectedRows.size}
           </button>
         )}
-        {rows.length > 0 && !hasEdits && (
+        {rows.length > 0 && !hasPendingChanges && (
           <div className="flex items-center gap-0.5 text-text-muted text-[10px]">
             <Download size={10} />
             <button onClick={() => exportData("csv")} className="px-1 py-0.5 hover:text-text-primary transition-colors">CSV</button>
@@ -1059,9 +1144,14 @@ export default function TableDataView({
           </div>
         )}
 
-        {hasEdits && (
+        {hasPendingChanges && (
           <div className="flex items-center gap-2">
-            <span className="text-text-muted text-xs">{edits.size} change{edits.size > 1 ? "s" : ""}</span>
+            <span className="text-text-muted text-xs">
+              {[
+                newRowIndex !== null ? "1 new row" : null,
+                existingRowEdits.size > 0 ? `${existingRowEdits.size} change${existingRowEdits.size > 1 ? "s" : ""}` : null,
+              ].filter(Boolean).join(", ")}
+            </span>
             <button onClick={revertAll} className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-accent border border-border text-text-secondary hover:text-text-primary transition-colors">
               <RotateCcw size={12} /> Revert
             </button>
@@ -1168,21 +1258,37 @@ export default function TableDataView({
                 const displayRow = displayedRows[displayIdx];
                 const rowIdx = displayRow.__idx;
                 const isSelected = selectedRows.has(rowIdx);
+                const isNewRow = rowIdx === newRowIndex;
                 return (
                   <div
                     key={rowIdx}
-                    className={`border-b border-border/50 transition-colors ${isSelected && !cellSel ? "bg-highlight/10" : "hover:bg-accent/30"}`}
-                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: vRow.size, transform: `translateY(${vRow.start}px)` }}
+                    className={`border-b border-border/50 transition-colors ${isNewRow ? "bg-green-500/5" : isSelected && !cellSel ? "bg-highlight/10" : "hover:bg-accent/30"}`}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: vRow.size, transform: `translateY(${vRow.start}px)`, boxShadow: isNewRow ? "inset 2px 0 0 0 rgb(34 197 94)" : undefined }}
                     onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
                   >
-                    <div
-                      className={`absolute top-0 flex items-center justify-end px-2 border-r border-border/50 select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
-                      style={{ left: 0, width: MARKER_W, height: "100%" }}
-                      onMouseDown={(e) => { setCellSel(null); handleRowMouseDown(e, rowIdx); }}
-                      onMouseEnter={() => handleRowMouseEnter(rowIdx)}
-                    >
-                      {rowIdx + 1}
-                    </div>
+                    {isNewRow ? (
+                      <div
+                        className="absolute top-0 flex items-center justify-center gap-1 px-1 border-r border-border/50 select-none"
+                        style={{ left: 0, width: MARKER_W, height: "100%" }}
+                      >
+                        <button
+                          onClick={discardNewRow}
+                          className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Discard this new row"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        className={`absolute top-0 flex items-center justify-end px-2 border-r border-border/50 select-none cursor-pointer ${isSelected ? "bg-highlight/20 text-highlight" : "text-text-muted hover:bg-accent/60"}`}
+                        style={{ left: 0, width: MARKER_W, height: "100%" }}
+                        onMouseDown={(e) => { setCellSel(null); handleRowMouseDown(e, rowIdx); }}
+                        onMouseEnter={() => handleRowMouseEnter(rowIdx)}
+                      >
+                        {rowIdx + 1}
+                      </div>
+                    )}
                     {virtualColumns.map((vCol) => {
                       const colIdx = vCol.index;
                       const col = visibleColumns[colIdx];
@@ -1397,6 +1503,10 @@ export default function TableDataView({
             setEditingCell((prev) => prev ? { ...prev, value: def ?? null } : null);
             setTimeout(() => inputRef.current?.focus(), 0);
           }}
+          onGenerateUuid={(version) => {
+            setEditingCell((prev) => prev ? { ...prev, value: version === "v4" ? uuidv4() : uuidv7() } : null);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
         />
       )}
 
@@ -1407,12 +1517,14 @@ export default function TableDataView({
               <div className="flex items-center gap-2">
                 <Eye size={14} className="text-highlight" />
                 <span className="text-sm font-semibold text-text-primary">{isDocStore ? "Preview changes" : "Preview SQL"}</span>
-                <span className="text-text-muted text-xs">— {edits.size} change{edits.size > 1 ? "s" : ""}</span>
+                <span className="text-text-muted text-xs">
+                  — {[...buildInsertSQL(), ...buildUpdateSQL()].length || edits.size} statement{([...buildInsertSQL(), ...buildUpdateSQL()].length || edits.size) === 1 ? "" : "s"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    const text = isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : buildUpdateSQL().join(";\n");
+                    const text = isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : [...buildInsertSQL(), ...buildUpdateSQL()].join(";\n");
                     navigator.clipboard.writeText(text);
                     setPreviewCopied(true);
                     setTimeout(() => setPreviewCopied(false), 1500);
@@ -1425,7 +1537,7 @@ export default function TableDataView({
               </div>
             </div>
             <pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
-              {isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : buildUpdateSQL().join(";\n\n")}
+              {isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : [...buildInsertSQL(), ...buildUpdateSQL()].join(";\n\n")}
             </pre>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-border flex-shrink-0">
               <button onClick={() => setShowSqlPreview(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Close</button>
