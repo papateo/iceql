@@ -76,6 +76,7 @@ export default function ConnectionsPanel({
   const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null);
   const [pinnedTables, setPinnedTables] = useState<PinnedTable[]>(loadPinned);
   const [pinnedOpen, setPinnedOpen] = useState(true);
+  const [structureOpen, setStructureOpen] = useState(true);
   const [ctx, setCtx] = useState<CtxState | null>(null);
 
   const pinTable = useCallback((item: PinnedTable) => {
@@ -193,32 +194,45 @@ export default function ConnectionsPanel({
       )}
 
       {/* Structure: databases → tables of the active data source */}
-      <div className="flex-1 overflow-y-auto py-1">
-        {ac ? (
-          ac.databases.map((dbName) => (
-            <DatabaseNode
-              key={dbName}
-              dbName={dbName}
-              ac={ac}
-              configId={activeConn.id}
-              dbType={activeConn.db_type}
-              connectionName={activeConn.name}
-              highlight={highlight}
-              onExpandDb={onExpandDb}
-              onExpandTable={onExpandTable}
-              onOpenTable={onOpenTable}
-              onOpenQuery={onOpenQuery}
-              onEditTable={onEditTable}
-              onContextMenu={openCtx}
-              pinnedTables={pinnedTables}
-              onPin={pinTable}
-              onUnpin={unpinTable}
-            />
-          ))
-        ) : (
-          <div className="px-3 py-6 text-xs text-text-muted text-center">This connection is not active.</div>
-        )}
+      <div className="flex-shrink-0 border-b border-border">
+        <button
+          onClick={() => setStructureOpen((v) => !v)}
+          className="w-full flex items-center gap-1 pl-5 pr-3 py-1 text-[11px] font-semibold text-text-muted hover:text-text-secondary transition-colors"
+        >
+          {structureOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <Database size={12} className="text-yellow-400" />
+          <span className="flex-1 text-left">Structure</span>
+          {ac && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-text-muted">{ac.databases.length}</span>}
+        </button>
       </div>
+      {structureOpen && (
+        <div className="flex-1 overflow-y-auto py-1">
+          {ac ? (
+            ac.databases.map((dbName) => (
+              <DatabaseNode
+                key={dbName}
+                dbName={dbName}
+                ac={ac}
+                configId={activeConn.id}
+                dbType={activeConn.db_type}
+                connectionName={activeConn.name}
+                highlight={highlight}
+                onExpandDb={onExpandDb}
+                onExpandTable={onExpandTable}
+                onOpenTable={onOpenTable}
+                onOpenQuery={onOpenQuery}
+                onEditTable={onEditTable}
+                onContextMenu={openCtx}
+                pinnedTables={pinnedTables}
+                onPin={pinTable}
+                onUnpin={unpinTable}
+              />
+            ))
+          ) : (
+            <div className="px-3 py-6 text-xs text-text-muted text-center">This connection is not active.</div>
+          )}
+        </div>
+      )}
 
       {ctx && (
         <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />

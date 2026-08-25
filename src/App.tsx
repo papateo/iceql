@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard } from "lucide-react";
+import { Database, ScrollText, Settings, Plus, Unplug, Trash2, Scissors, Copy, Clipboard, ChevronLeft, ChevronRight } from "lucide-react";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import ContextMenu from "./components/ContextMenu";
 import ConnectionManager from "./components/ConnectionManager";
@@ -31,6 +31,7 @@ function buildSqlSchema(
 export default function App() {
   const store = useAppStore();
   const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return JSON.parse(localStorage.getItem("iceql-settings") ?? "{}"); } catch { return {}; }
@@ -243,44 +244,57 @@ export default function App() {
         />
       )}
 
-      {/* Sidebar */}
-      <div
-        className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden select-none"
-        style={{ width: sidebarWidth }}
-      >
-        {/* Connection error banner */}
-        {connectError && (
-          <div className="error-banner mx-2 mt-2 flex items-center gap-1">
-            <span className="flex-1">{connectError}</span>
-            <button className="underline opacity-70 hover:opacity-100" onClick={() => setConnectError(null)}>dismiss</button>
-          </div>
-        )}
-        <ConnectionsPanel
-          savedConnections={store.savedConnections}
-          activeConnections={store.activeConnections}
-          activeDataSourceId={store.activeDataSourceId}
-          onExpandDb={store.expandDatabase}
-          onExpandTable={store.expandTable}
-          locateTarget={store.locateTarget}
-          onOpenTable={store.openTableTab}
-          onOpenQuery={store.openQueryTab}
-          onEditTable={(configId, dbName, tableName, dbType) => {
-            const ac = store.activeConnections.get(configId);
-            if (!ac) return;
-            setEditTableTarget({ connectionId: ac.connectionId, dbType, database: dbName, tableName });
-          }}
-          onDisconnect={store.disconnectFromDb}
-          onDeleteConnection={store.deleteConnection}
-        />
-      </div>
+      {/* Sidebar + resize divider, wrapped so the collapse toggle can anchor to their shared edge */}
+      <div className="relative flex flex-shrink-0">
+        <div
+          className="flex flex-col bg-sidebar border-r border-border flex-shrink-0 overflow-hidden select-none"
+          style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
+        >
+          {/* Connection error banner */}
+          {connectError && (
+            <div className="error-banner mx-2 mt-2 flex items-center gap-1">
+              <span className="flex-1">{connectError}</span>
+              <button className="underline opacity-70 hover:opacity-100" onClick={() => setConnectError(null)}>dismiss</button>
+            </div>
+          )}
+          <ConnectionsPanel
+            savedConnections={store.savedConnections}
+            activeConnections={store.activeConnections}
+            activeDataSourceId={store.activeDataSourceId}
+            onExpandDb={store.expandDatabase}
+            onExpandTable={store.expandTable}
+            locateTarget={store.locateTarget}
+            onOpenTable={store.openTableTab}
+            onOpenQuery={store.openQueryTab}
+            onEditTable={(configId, dbName, tableName, dbType) => {
+              const ac = store.activeConnections.get(configId);
+              if (!ac) return;
+              setEditTableTarget({ connectionId: ac.connectionId, dbType, database: dbName, tableName });
+            }}
+            onDisconnect={store.disconnectFromDb}
+            onDeleteConnection={store.deleteConnection}
+          />
+        </div>
 
-      {/* Resize divider */}
-      <div
-        className={`w-1 cursor-col-resize hover:bg-highlight/40 transition-colors flex-shrink-0 ${
-          dragging ? "bg-highlight/40" : "bg-border"
-        }`}
-        onMouseDown={handleDividerMouseDown}
-      />
+        {/* Resize divider */}
+        {!sidebarCollapsed && (
+          <div
+            className={`w-1 cursor-col-resize hover:bg-highlight/40 transition-colors flex-shrink-0 ${
+              dragging ? "bg-highlight/40" : "bg-border"
+            }`}
+            onMouseDown={handleDividerMouseDown}
+          />
+        )}
+
+        {/* Collapse/expand the whole sidebar panel — lets the query/table view go full width */}
+        <button
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          className="absolute top-1/2 -translate-y-1/2 -right-2.5 z-20 w-5 h-10 flex items-center justify-center rounded-full bg-sidebar border border-border text-text-muted hover:text-highlight hover:border-highlight transition-colors shadow-sm"
+        >
+          {sidebarCollapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        </button>
+      </div>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
