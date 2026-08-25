@@ -13,6 +13,9 @@ export type FontSize = "sm" | "md" | "lg" | "xl";
 export interface AppSettings {
   theme: AppTheme;
   fontSize: FontSize;
+  // Auto-appended to a plain SELECT run from the SQL editor when it has no LIMIT of its own —
+  // a safety net against accidentally pulling back an entire huge table. 0 disables it.
+  queryRowLimit?: number;
 }
 
 interface Props {
@@ -33,6 +36,15 @@ const THEMES: {
   { value: "nord",     label: "Nord",      dark: true,  swatches: ["#242933", "#2b3040", "#88c0d0"] },
   { value: "light",    label: "Light",     dark: false, swatches: ["#f0f4f8", "#e2eaf2", "#0284c7"] },
   { value: "sepia",    label: "Sepia",     dark: false, swatches: ["#f5f0e6", "#ebe4d7", "#b45309"] },
+];
+
+export const DEFAULT_QUERY_ROW_LIMIT = 1000;
+
+const ROW_LIMIT_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: "Off" },
+  { value: 500, label: "500" },
+  { value: 1000, label: "1,000" },
+  { value: 5000, label: "5,000" },
 ];
 
 const FONT_SIZES: { value: FontSize; label: string; px: number }[] = [
@@ -130,6 +142,31 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                 >
                   A
                   <span className="text-[10px]">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Query Safety Limit */}
+          <div>
+            <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+              Query Safety Limit
+            </label>
+            <p className="text-[11px] text-text-muted leading-relaxed mb-3">
+              Adds a LIMIT to a SELECT run from the SQL editor when it doesn't already have one — so an unbounded query can't accidentally pull back an entire huge table.
+            </p>
+            <div className="flex gap-2">
+              {ROW_LIMIT_OPTIONS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => onChange({ ...settings, queryRowLimit: value })}
+                  className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                    (settings.queryRowLimit ?? DEFAULT_QUERY_ROW_LIMIT) === value
+                      ? "border-highlight bg-accent text-highlight"
+                      : "border-border bg-surface text-text-muted hover:border-highlight/50 hover:text-text-primary"
+                  }`}
+                >
+                  {label}
                 </button>
               ))}
             </div>

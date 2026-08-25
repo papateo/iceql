@@ -632,7 +632,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                         key={col}
                         onMouseDown={() => { if (selectedRows.size > 0) setSelectedRows(new Set()); }}
                         onDoubleClick={() => startEdit(rowIdx, col)}
-                        className={`absolute top-0 flex items-center px-3 border-r border-border/50 overflow-hidden ${
+                        className={`absolute top-0 flex items-center px-3 border-r border-border/50 overflow-hidden font-mono ${
                           edited ? "bg-highlight/10 text-highlight" : "text-text-primary"
                         } ${editableTable ? "cursor-text" : ""} ${isEditing ? "select-text" : "select-none"}`}
                         style={{ left: MARKER_W + vCol.start, width: vCol.size, height: "100%" }}
@@ -651,7 +651,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                               if (e.key === "Enter") commitCellEdit();
                               else if (e.key === "Escape") setEditingCell(null);
                             }}
-                            className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs selection:bg-highlight/40 selection:text-text-primary"
+                            className="absolute inset-0 w-full h-full bg-bg border border-highlight rounded px-3 text-text-primary outline-none text-xs font-mono selection:bg-highlight/40 selection:text-text-primary"
                             style={{ userSelect: "text", WebkitUserSelect: "text" }}
                           />
                         )}

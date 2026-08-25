@@ -5,8 +5,10 @@ import MongoQueryEditor from "./MongoQueryEditor";
 import RedisQueryEditor from "./RedisQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
-import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase } from "../utils/sql";
+import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase, maybeInjectLimit, buildPagedQuery } from "../utils/sql";
 import { parseMongoCollection } from "../utils/mongo";
+
+const QUERY_PAGE_SIZE_OPTIONS = [100, 500, 1000, 5000] as const;
 
 interface Props {
   tabId: string;
@@ -17,6 +19,7 @@ interface Props {
   schema: Record<string, string[]>;
   dbColumns: Record<string, ColumnInfo[]>;
   isDark: boolean;
+  queryRowLimit: number;
   onLoadSchema: () => void;
   onDatabaseChange: (db: string) => void;
   onQueryChange: (q: string) => void;
@@ -32,7 +35,7 @@ interface Props {
 }
 
 export default function QueryView({
-  query, database, databases, dbType, schema, dbColumns, isDark,
+  query, database, databases, dbType, schema, dbColumns, isDark, queryRowLimit,
   onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onCancelQuery, onGetPrimaryKeys,
   onMongoUpdate, onMongoDelete,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
@@ -44,6 +47,16 @@ export default function QueryView({
   // stays null while a transaction-scoped statement is in flight.
   const [currentQueryId, setCurrentQueryId] = useState<string | null>(null);
   const [lastRunQuery, setLastRunQuery] = useState("");
+  // Pagination for queries the safety limit (Settings > Query Safety Limit) silently truncated —
+  // `autoLimited` is only true when the query itself had no LIMIT of its own. `showingAll` means
+  // the user explicitly opted out of the safety net for the current run via "Show all data".
+  const [queryOffset, setQueryOffset] = useState(0);
+  const [autoLimited, setAutoLimited] = useState(false);
+  const [showingAll, setShowingAll] = useState(false);
+  // The page size actually used for the last run — starts at the Settings default, but a fresh
+  // query (Run/Cmd+Enter) always resets it back to that default; only Prev/Next/page-size clicks
+  // carry a chosen size forward across re-runs of the same query.
+  const [activeLimit, setActiveLimit] = useState(queryRowLimit);
   const [rowIds, setRowIds] = useState<string[] | null>(null);
   const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
   const [editorHeight, setEditorHeight] = useState(240);
@@ -124,13 +137,28 @@ export default function QueryView({
     setLastRunQuery(q);
   };
 
-  const runQuery = async (q: string) => {
+  const runQuery = async (q: string, pageOpts?: { offset?: number; showAll?: boolean; limit?: number }) => {
     if (!q.trim()) return;
     setLoading(true);
     setError(null);
     try {
       const useCtid = dbType === "postgresql" && parseEditableTable(q) !== null;
-      const finalQ = useCtid ? injectCtid(q) : q;
+      const withCtid = useCtid ? injectCtid(q) : q;
+      const showAll = pageOpts?.showAll ?? false;
+      const offset = pageOpts?.offset ?? 0;
+      // A fresh run (no pageOpts at all) always falls back to the Settings default; Prev/Next
+      // and the page-size buttons pass the size the user is currently browsing with instead.
+      const limit = pageOpts?.limit ?? queryRowLimit;
+
+      let finalQ: string;
+      let limited = false;
+      if (showAll) {
+        finalQ = withCtid;
+      } else {
+        const autoLimitedQ = maybeInjectLimit(withCtid, limit);
+        limited = autoLimitedQ !== withCtid;
+        finalQ = limited && offset > 0 ? buildPagedQuery(withCtid, limit, offset) : autoLimitedQ;
+      }
 
       let res: QueryResult;
       if (inTransaction && transactionId) {
@@ -141,6 +169,10 @@ export default function QueryView({
         res = await onRunQuery(finalQ, queryId);
       }
       applyResult(res, q, useCtid);
+      setAutoLimited(limited);
+      setActiveLimit(limit);
+      setQueryOffset(offset);
+      setShowingAll(showAll);
 
       // The backend has no persistent session — it just runs each query against whatever
       // database the tab currently points at. Mirror a successful `USE db;` into the tab's
@@ -163,6 +195,15 @@ export default function QueryView({
   const handleCancelQuery = () => {
     if (currentQueryId) onCancelQuery(currentQueryId);
   };
+
+  // A full page (rows.length === the limit) means there's likely more to page through — not
+  // exact (the table could end exactly on a page boundary), but avoids a separate COUNT(*) query.
+  const hasMoreRows = autoLimited && (result?.rows.length ?? 0) >= activeLimit;
+  const handlePrevPage = () => runQuery(lastRunQuery, { offset: Math.max(0, queryOffset - activeLimit), limit: activeLimit });
+  const handleNextPage = () => runQuery(lastRunQuery, { offset: queryOffset + activeLimit, limit: activeLimit });
+  const handleShowAllRows = () => runQuery(lastRunQuery, { showAll: true, limit: activeLimit });
+  const handleApplySafetyLimit = () => runQuery(lastRunQuery, { offset: 0, limit: activeLimit });
+  const handleChangePageSize = (size: number) => runQuery(lastRunQuery, { offset: 0, limit: size });
 
   const handleCommit = async (sqls: string[]): Promise<number> => {
     let affected = 0;
@@ -330,6 +371,72 @@ export default function QueryView({
           isDark={isDark}
         />
       </div>
+
+      {(autoLimited || showingAll) && (
+        <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border bg-sidebar flex-shrink-0 text-xs flex-wrap">
+          {showingAll ? (
+            <>
+              <span className="text-yellow-400">
+                Showing all {(result?.rows.length ?? 0).toLocaleString()} rows — safety limit bypassed
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={handleApplySafetyLimit}
+                disabled={loading}
+                className="px-2 py-1 rounded text-text-muted hover:text-text-primary hover:bg-accent disabled:opacity-40 transition-colors"
+              >
+                Apply Safety Limit
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-text-muted whitespace-nowrap">
+                Rows {(queryOffset + 1).toLocaleString()}–{(queryOffset + (result?.rows.length ?? 0)).toLocaleString()} · query has no LIMIT
+              </span>
+              <button
+                onClick={handlePrevPage}
+                disabled={queryOffset === 0 || loading}
+                className="flex items-center gap-1 px-2 py-1 rounded text-text-muted hover:text-text-primary disabled:opacity-40 transition-colors"
+              >
+                ← Prev
+              </button>
+              <button
+                onClick={handleNextPage}
+                disabled={!hasMoreRows || loading}
+                className="flex items-center gap-1 px-2 py-1 rounded text-text-muted hover:text-text-primary disabled:opacity-40 transition-colors"
+              >
+                Next →
+              </button>
+              <div className="flex-1" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Rows:</span>
+                <div className="flex items-center gap-0.5">
+                  {QUERY_PAGE_SIZE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => handleChangePageSize(opt)}
+                      disabled={loading}
+                      className={`px-2 py-0.5 rounded transition-colors disabled:opacity-40 ${
+                        activeLimit === opt ? "bg-highlight text-bg font-medium" : "text-text-muted hover:text-text-primary hover:bg-accent"
+                      }`}
+                    >
+                      {opt.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={handleShowAllRows}
+                disabled={loading}
+                title="Fetch every row, ignoring the safety limit — can be slow on large tables"
+                className="px-2 py-1 rounded text-yellow-400 hover:bg-yellow-400/10 disabled:opacity-40 transition-colors"
+              >
+                Show all data
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

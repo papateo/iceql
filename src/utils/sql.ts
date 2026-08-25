@@ -209,6 +209,32 @@ export function parseUseDatabase(query: string): string | null {
   return m[1].replace(/^[`"]|[`"]$/g, "");
 }
 
+// Safety net for the "Run" button: appends a LIMIT to a plain SELECT/CTE query that doesn't
+// already have one, so accidentally running an unbounded query against a huge table doesn't
+// pull back the entire result set. Best-effort, not a real parser — skips anything that isn't
+// confidently a single top-level SELECT (a LIMIT keyword anywhere, even inside a subquery,
+// is treated as "already handled" so we never risk emitting invalid double-LIMIT SQL).
+export function maybeInjectLimit(query: string, limit: number): string {
+  if (!limit || limit <= 0) return query;
+  const cleaned = query
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .trim();
+  const lower = cleaned.toLowerCase();
+  if (!lower.startsWith("select") && !lower.startsWith("with")) return query;
+  if (/\blimit\b/.test(lower)) return query;
+  const trimmed = query.trim().replace(/;\s*$/, "");
+  return `${trimmed} LIMIT ${limit}`;
+}
+
+// Pages through a query the safety limit (see maybeInjectLimit) truncated — only ever called on
+// a query already confirmed eligible for that limit (plain SELECT/WITH, no existing LIMIT), so
+// appending our own LIMIT/OFFSET here is always safe.
+export function buildPagedQuery(query: string, limit: number, offset: number): string {
+  const trimmed = query.trim().replace(/;\s*$/, "");
+  return `${trimmed} LIMIT ${limit} OFFSET ${offset}`;
+}
+
 // Alias used for the injected ctid column so it can be found and stripped from displayed results.
 export const CTID_ALIAS = "__iceql_ctid__";
 

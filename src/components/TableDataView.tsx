@@ -1313,7 +1313,7 @@ export default function TableDataView({
                           onDoubleClick={() => { setCellSel(null); startEdit(rowIdx, col); }}
                         >
                           {isActive ? (
-                            <input ref={inputRef} className="w-full h-full px-3 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value ?? ""}
+                            <input ref={inputRef} className="w-full h-full px-3 bg-surface ring-1 ring-inset ring-highlight outline-none text-text-primary text-xs font-mono selection:bg-highlight/40 selection:text-text-primary" style={{ userSelect: "text", WebkitUserSelect: "text" }} value={editingCell.value ?? ""}
                               placeholder={editingCell.value === null ? "NULL" : undefined}
                               onChange={(e) => setEditingCell((prev) => prev ? { ...prev, value: e.target.value } : null)}
                               onMouseDown={(e) => e.stopPropagation()}
@@ -1326,7 +1326,7 @@ export default function TableDataView({
                               onBlur={commitCell}
                             />
                           ) : (
-                            <div className={`px-3 w-full min-w-0 cursor-default ${edited ? "text-highlight" : "text-text-primary"}`}>
+                            <div className={`px-3 w-full min-w-0 cursor-default font-mono ${edited ? "text-highlight" : "text-text-primary"}`}>
                               <CellValue value={getCellValue(rowIdx, col)} />
                               {edited && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-highlight" />}
                             </div>

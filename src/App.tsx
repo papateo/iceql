@@ -10,7 +10,7 @@ import QueryView from "./components/QueryView";
 import SqlLogPanel from "./components/SqlLogPanel";
 import { useAppStore, loadSavedConnections, loadSession, saveSession } from "./store/appStore";
 import type { ActiveConnection } from "./types";
-import SettingsModal, { type AppSettings } from "./components/SettingsModal";
+import SettingsModal, { type AppSettings, DEFAULT_QUERY_ROW_LIMIT } from "./components/SettingsModal";
 import EditTableModal, { type EditTableTarget } from "./components/EditTableModal";
 import DbLogo from "./components/DbLogo";
 
@@ -366,6 +366,7 @@ export default function App() {
                     schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
                     dbColumns={store.activeConnections.get(tab.connectionId)?.dbColumns ?? {}}
                     isDark={isDark}
+                    queryRowLimit={settings.queryRowLimit ?? DEFAULT_QUERY_ROW_LIMIT}
                     onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
                     onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
                     onQueryChange={(q) => store.updateTabQuery(tab.id, q)}
@@ -418,7 +419,7 @@ export default function App() {
       </div>
       {showSettings && (
         <SettingsModal
-          settings={{ theme: settings.theme ?? "dark", fontSize: settings.fontSize ?? "md" }}
+          settings={{ theme: settings.theme ?? "dark", fontSize: settings.fontSize ?? "md", queryRowLimit: settings.queryRowLimit }}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
         />
