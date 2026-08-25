@@ -55,6 +55,20 @@ function insertMqttMessage(root: MqttTopicNode, topic: string, msg: MqttMessage)
   return recur(root, 0);
 }
 
+// Resets one topic's message history (and count) back to empty, leaving its children and every
+// other topic in the tree untouched — used by the "Clear" button in a topic's message view.
+function clearMqttTopicNode(root: MqttTopicNode, topic: string): MqttTopicNode {
+  const segments = topic.split("/");
+  const recur = (node: MqttTopicNode, idx: number): MqttTopicNode => {
+    if (idx === segments.length) return { ...node, messages: [], messageCount: 0 };
+    const seg = segments[idx];
+    const child = node.children[seg];
+    if (!child) return node; // nothing recorded at this path yet — nothing to clear
+    return { ...node, children: { ...node.children, [seg]: recur(child, idx + 1) } };
+  };
+  return recur(root, 0);
+}
+
 function base64ToUtf8(b64: string): string {
   try {
     const binary = atob(b64);
@@ -324,6 +338,17 @@ export function useAppStore() {
   // MQTT has no databases/tables to enumerate — connects, auto-subscribes to everything
   // backend-side, then wires up an event listener that grows the topic tree as messages arrive.
   const connectMqtt = useCallback(async (config: ConnectionConfig): Promise<string> => {
+    // Guard against connecting twice to the same saved connection — without this, a second
+    // call (e.g. from a stray re-render or a re-click) would leave the OLD backend connection
+    // and its "mqtt-message" listener running forever alongside the new one, so every message
+    // gets delivered twice in a row. That made "compare with previous message" always report
+    // "no changes", since the two most recent entries were really just one message duplicated.
+    const existing = activeConnections.get(config.id);
+    if (existing) {
+      setSelectedConnectionId(config.id);
+      setActiveDataSourceId(config.id);
+      return existing.connectionId;
+    }
     const connectionId = await invoke<string>("mqtt_connect", { config });
     const ac: ActiveConnection = {
       connectionId,
@@ -361,10 +386,13 @@ export function useAppStore() {
         return next;
       });
     });
+    // Belt-and-suspenders: if a listener from an earlier connection for this same id is
+    // somehow still registered, drop it before installing the new one.
+    mqttUnlistenRef.current.get(config.id)?.();
     mqttUnlistenRef.current.set(config.id, unlisten);
 
     return connectionId;
-  }, []);
+  }, [activeConnections]);
 
   const connectToDb = useCallback(
     async (config: ConnectionConfig): Promise<string> => {
@@ -768,6 +796,18 @@ export function useAppStore() {
     []
   );
 
+  // Local-only — just resets what's cached for this topic in the frontend, doesn't touch the
+  // broker (a retained value there, if any, still comes back on the next matching subscribe).
+  const clearMqttTopicHistory = useCallback((configId: string, topic: string) => {
+    setActiveConnections((prev) => {
+      const conn = prev.get(configId);
+      if (!conn?.mqttRoot) return prev;
+      const next = new Map(prev);
+      next.set(configId, { ...conn, mqttRoot: clearMqttTopicNode(conn.mqttRoot, topic) });
+      return next;
+    });
+  }, []);
+
   const closeTab = useCallback(
     (tabId: string) => {
       setTabs((prev) => {
@@ -1000,6 +1040,7 @@ export function useAppStore() {
     subscribeMqttTopic,
     unsubscribeMqttTopic,
     publishMqtt,
+    clearMqttTopicHistory,
     closeTab,
     reorderTabs,
     closeOtherTabs,

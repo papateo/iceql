@@ -292,6 +292,7 @@ export default function App() {
         topic={tab.topic ?? ""}
         mqttRoot={store.activeConnections.get(tab.connectionId)?.mqttRoot}
         onPublish={store.publishMqtt}
+        onClear={() => store.clearMqttTopicHistory(tab.connectionId, tab.topic ?? "")}
       />
     ) : (
       <QueryView
