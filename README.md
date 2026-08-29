@@ -4,7 +4,7 @@
 
 A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired by TablePlus, with an icy blue dark theme.
 
-🌐 [iceql.com](https://iceql.com)
+<img src="docs/screenshots/icon.png" width="20" align="top" alt=""> [iceql.com](https://iceql.com)
 
 ![IceQL — Multi-Datasource Connections Panel](docs/screenshots/multi-datasource.png)
 
