@@ -8,7 +8,7 @@ pub struct ConnectionConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub password: String, // NOTE: stored in plaintext for simplicity
+    pub password: String, // NOTE: never persisted to disk as-is; see persistence.rs (OS keychain)
     pub database: String,
     pub filename: Option<String>, // for SQLite
     // `#[serde(default)]` so connections saved/exported before this field existed still
