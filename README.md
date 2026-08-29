@@ -61,14 +61,14 @@ cd iceql
 npm install
 
 # Run in development mode
-npm run tauri dev
+npm run tauri:dev
 ```
 
 ## Build
 
 ```bash
 # Production build (outputs installer to src-tauri/target/release/bundle/)
-npm run tauri build
+npm run tauri:build
 ```
 
 ## Project Structure
