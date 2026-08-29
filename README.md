@@ -6,6 +6,8 @@ A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired
 
 <img src="docs/screenshots/icon.png" width="20" align="top" alt=""> [iceql.com](https://iceql.com)
 
+[![Download IceQL](https://img.shields.io/badge/⬇_Download-iceql.com-38bdf8?style=for-the-badge)](https://iceql.com/#download)
+
 `PostgreSQL` · `MySQL / MariaDB` · `SQLite` · `MongoDB` · `Redis` · `CSV` · `MQTT`
 
 ![IceQL — Multi-Datasource Connections Panel](docs/screenshots/multi-datasource.png)
