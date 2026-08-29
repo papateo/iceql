@@ -8,15 +8,6 @@ dist-ssr/
 # Tauri build output
 src-tauri/target/
 
-# App Store / code signing artifacts (developer-account-specific, never commit)
-dist-mas/
-*.pkg
-*.mobileprovision
-*.provisionprofile
-*.p12
-*.cer
-*.certSigningRequest
-
 # Environment & secrets
 .env
 .env.local
