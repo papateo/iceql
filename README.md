@@ -1,8 +1,18 @@
-# iceql.com
+# IceQL
 
 > **The cool way to manage your database**
 
 A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired by TablePlus, with an icy blue dark theme.
+
+🌐 [iceql.com](https://iceql.com)
+
+![IceQL — Multi-Datasource Connections Panel](docs/screenshots/multi-datasource.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Table view](docs/screenshots/table.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## Features
 
