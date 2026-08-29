@@ -40,7 +40,7 @@ cargo install tauri-cli
 
 ```bash
 # Clone the repo
-git clone https://REDACTED-INTERNAL-HOST/pde/iceql.git
+git clone https://github.com/papateo/iceql.git
 cd iceql
 
 # Install frontend dependencies
