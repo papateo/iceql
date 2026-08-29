@@ -6,6 +6,8 @@ A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired
 
 <img src="docs/screenshots/icon.png" width="20" align="top" alt=""> [iceql.com](https://iceql.com)
 
+`PostgreSQL` · `MySQL / MariaDB` · `SQLite` · `MongoDB` · `Redis` · `CSV` · `MQTT`
+
 ![IceQL — Multi-Datasource Connections Panel](docs/screenshots/multi-datasource.png)
 
 ## Screenshots
@@ -16,7 +18,7 @@ A modern, cross-platform desktop SQL client built with Tauri 2 + React. Inspired
 
 ## Features
 
-- **Multi-database support** — PostgreSQL, MySQL/MariaDB, SQLite
+- **Multi-database support** — PostgreSQL, MySQL/MariaDB, SQLite, MongoDB, Redis, CSV, MQTT
 - **Connection manager** — save, edit, and delete named connections
 - **Database tree** — browse connections → databases → tables → columns
 - **Table data viewer** — paginated browsing with row numbers
