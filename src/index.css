@@ -84,6 +84,22 @@
   --color-text-muted: 90 138 170;
 }
 
+[data-theme="white"] {
+  --error-bg: rgb(254 226 226);
+  --error-border: rgb(252 165 165);
+  --error-text: rgb(153 27 27);
+  --error-icon: rgb(220 38 38);
+  --color-bg: 255 255 255;
+  --color-sidebar: 247 247 247;
+  --color-accent: 238 238 238;
+  --color-highlight: 37 99 235;
+  --color-surface: 245 245 245;
+  --color-border: 226 226 226;
+  --color-text-primary: 23 23 23;
+  --color-text-secondary: 82 82 82;
+  --color-text-muted: 140 140 140;
+}
+
 [data-theme="sepia"] {
   --error-bg: rgb(254 226 226);
   --error-border: rgb(252 165 165);

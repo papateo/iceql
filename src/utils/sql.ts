@@ -60,25 +60,41 @@ export function buildUpdateStatements(
       sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ctid = ${sqlLiteral(ctid)}`);
       return;
     }
-    // Use primary key columns for WHERE if available — more reliable than all-column match.
-    // For MySQL tables without PK metadata, avoid strict `IS NULL` full-row matching because
-    // driver/type conversions can surface default non-null DB values as null in the client row,
-    // which causes false 0-row matches.
-    const hasPrimaryKeys = Boolean(primaryKeys && primaryKeys.length > 0);
-    const whereCols = hasPrimaryKeys ? primaryKeys! : columns;
-    const whereClauses = whereCols
-      .flatMap((col) => {
+    if (!hasStableRowKey(primaryKeys)) {
+      throw new Error(NO_STABLE_ROW_KEY);
+    }
+    const whereClauses = primaryKeys!
+      .map((col) => {
         const v = original[col];
         if (v === null || v === undefined) {
-          return !hasPrimaryKeys && dbType === "mysql" ? [] : [`${qi(col)} IS NULL`];
+          throw new Error(`Refusing to update: primary key column ${qi(col)} is empty on this row.`);
         }
-        return [`${qi(col)} = ${sqlLiteral(v)}`];
+        return `${qi(col)} = ${sqlLiteral(v)}`;
       })
       .join(" AND ");
-    const where = whereClauses || "1=1";
-    sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${where}${limitClause}`);
+    sqls.push(`UPDATE ${tableRef(dbType, database, table)} SET ${setClauses} WHERE ${whereClauses}${limitClause}`);
   });
   return sqls;
+}
+
+export const NO_STABLE_ROW_KEY =
+  "Refusing to update or delete: this table has no primary key IceQL can use, so the wrong rows could change.";
+
+export function hasStableRowKey(primaryKeys?: string[] | null, rowIds?: (string | null)[] | null): boolean {
+  if (primaryKeys && primaryKeys.length > 0) return true;
+  if (rowIds && rowIds.some((id) => Boolean(id))) return true;
+  return false;
+}
+
+/** Abort a write batch if an UPDATE/DELETE did not hit exactly one row. */
+export function assertSingleRowWrite(sql: string, affected: number): void {
+  if (!/^\s*(update|delete)\b/i.test(sql)) return;
+  const verb = sql.trim().split(/\s+/)[0].toUpperCase();
+  if (affected !== 1) {
+    throw new Error(
+      `Stopped: ${verb} matched ${affected} row(s), expected exactly 1. Later statements in this batch were not run.`
+    );
+  }
 }
 
 // Build INSERT statements for newly-added (not-yet-persisted) rows.
@@ -126,27 +142,25 @@ export function buildDeleteStatements(
 ): string[] {
   const qi = (name: string) => quoteIdent(dbType, name);
   const limitClause = dbType === "mysql" ? " LIMIT 1" : "";
-  // Use primary key columns for WHERE if available — more reliable than all-column match.
-  // Same MySQL fallback logic as UPDATE when PK metadata is unavailable.
-  const hasPrimaryKeys = Boolean(primaryKeys && primaryKeys.length > 0);
-  const whereCols = hasPrimaryKeys ? primaryKeys! : columns;
   return selectedIndices.map((rowIdx) => {
     const row = rows[rowIdx];
     const ctid = rowIds?.[rowIdx];
     if (ctid) {
       return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ctid = ${sqlLiteral(ctid)}`;
     }
-    const whereClauses = whereCols
-      .flatMap((col) => {
+    if (!hasStableRowKey(primaryKeys)) {
+      throw new Error(NO_STABLE_ROW_KEY);
+    }
+    const whereClauses = primaryKeys!
+      .map((col) => {
         const v = row[col];
         if (v === null || v === undefined) {
-          return !hasPrimaryKeys && dbType === "mysql" ? [] : [`${qi(col)} IS NULL`];
+          throw new Error(`Refusing to delete: primary key column ${qi(col)} is empty on this row.`);
         }
-        return [`${qi(col)} = ${sqlLiteral(v)}`];
+        return `${qi(col)} = ${sqlLiteral(v)}`;
       })
       .join(" AND ");
-    const where = whereClauses || "1=1";
-    return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ${where}${limitClause}`;
+    return `DELETE FROM ${tableRef(dbType, database, table)} WHERE ${whereClauses}${limitClause}`;
   });
 }
 

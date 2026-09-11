@@ -1,14 +1,14 @@
 import { useRef, useCallback, useMemo, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
-import { dracula } from "@uiw/codemirror-theme-dracula";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { autocompletion, type CompletionContext, type CompletionResult, type Completion } from "@codemirror/autocomplete";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Play, Loader2, Database, Square, Layers, Scissors, Copy, Clipboard } from "lucide-react";
 import ContextMenu from "./ContextMenu";
-import { lightTheme, customTheme } from "./SqlEditor";
+import { customTheme, codeMirrorTheme } from "./SqlEditor";
+import type { AppTheme } from "./SettingsModal";
 
 interface Props {
   value: string;
@@ -20,6 +20,7 @@ interface Props {
   databases: string[];
   schema: Record<string, string[]>;
   isDark: boolean;
+  appTheme?: AppTheme;
   onDatabaseChange: (db: string) => void;
 }
 
@@ -74,7 +75,7 @@ const selectClass =
   "appearance-none bg-accent/60 border border-border rounded-lg text-xs text-text-secondary pl-7 pr-6 py-1.5 outline-none focus:border-highlight hover:bg-accent transition-colors cursor-pointer";
 
 export default function MongoQueryEditor({
-  value, onChange, onRun, running, onCancel, database, databases, schema, isDark, onDatabaseChange,
+  value, onChange, onRun, running, onCancel, database, databases, schema, isDark, appTheme, onDatabaseChange,
 }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
   const collections = useMemo(() => Object.keys(schema), [schema]);
@@ -216,7 +217,7 @@ export default function MongoQueryEditor({
           ref={editorRef as never}
           value={value}
           onChange={onChange}
-          theme={isDark ? dracula : lightTheme}
+          theme={codeMirrorTheme(isDark, appTheme)}
           extensions={extensions}
           style={{ height: "100%" }}
           placeholder={defaultSpec(collections[0] ?? "your_collection")}

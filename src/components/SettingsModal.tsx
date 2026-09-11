@@ -6,6 +6,7 @@ export type AppTheme =
   | "midnight"
   | "nord"
   | "light"
+  | "white"
   | "sepia";
 
 export type FontSize = "sm" | "md" | "lg" | "xl";
@@ -35,6 +36,7 @@ const THEMES: {
   { value: "midnight", label: "Midnight",  dark: true,  swatches: ["#08080c", "#0e0e14", "#8b5cf6"] },
   { value: "nord",     label: "Nord",      dark: true,  swatches: ["#242933", "#2b3040", "#88c0d0"] },
   { value: "light",    label: "Light",     dark: false, swatches: ["#f0f4f8", "#e2eaf2", "#0284c7"] },
+  { value: "white",    label: "White",     dark: false, swatches: ["#ffffff", "#f7f7f7", "#2563eb"] },
   { value: "sepia",    label: "Sepia",     dark: false, swatches: ["#f5f0e6", "#ebe4d7", "#b45309"] },
 ];
 

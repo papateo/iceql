@@ -5,7 +5,8 @@ import MongoQueryEditor from "./MongoQueryEditor";
 import RedisQueryEditor from "./RedisQueryEditor";
 import ResultsPanel from "./ResultsPanel";
 import type { ColumnInfo, QueryResult } from "../types";
-import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase, maybeInjectLimit, buildPagedQuery, buildCountQuery } from "../utils/sql";
+import type { AppTheme } from "./SettingsModal";
+import { parseEditableTable, injectCtid, CTID_ALIAS, parseUseDatabase, maybeInjectLimit, buildPagedQuery, buildCountQuery, assertSingleRowWrite } from "../utils/sql";
 import { parseMongoCollection } from "../utils/mongo";
 
 const QUERY_PAGE_SIZE_OPTIONS = [100, 500, 1000, 5000] as const;
@@ -19,6 +20,7 @@ interface Props {
   schema: Record<string, string[]>;
   dbColumns: Record<string, ColumnInfo[]>;
   isDark: boolean;
+  appTheme: AppTheme;
   queryRowLimit: number;
   onLoadSchema: () => void;
   onDatabaseChange: (db: string) => void;
@@ -35,7 +37,7 @@ interface Props {
 }
 
 export default function QueryView({
-  query, database, databases, dbType, schema, dbColumns, isDark, queryRowLimit,
+  query, database, databases, dbType, schema, dbColumns, isDark, appTheme, queryRowLimit,
   onLoadSchema, onDatabaseChange, onQueryChange, onRunQuery, onCancelQuery, onGetPrimaryKeys,
   onMongoUpdate, onMongoDelete,
   onBeginTransaction, onExecuteInTransaction, onCommitTransaction, onRollbackTransaction,
@@ -249,6 +251,7 @@ export default function QueryView({
       const res = inTransaction && transactionId
         ? await onExecuteInTransaction(transactionId, sql)
         : await onRunQuery(sql, uuidv4());
+      assertSingleRowWrite(sql, res.row_count ?? 0);
       affected += res.row_count ?? 0;
     }
     if (lastRunQuery) await runQuery(lastRunQuery);
@@ -345,6 +348,7 @@ export default function QueryView({
             databases={databases}
             schema={schema}
             isDark={isDark}
+            appTheme={appTheme}
             onDatabaseChange={onDatabaseChange}
           />
         ) : dbType === "redis" ? (
@@ -357,6 +361,7 @@ export default function QueryView({
             database={database}
             databases={databases}
             isDark={isDark}
+            appTheme={appTheme}
             onDatabaseChange={onDatabaseChange}
           />
         ) : (
@@ -371,6 +376,7 @@ export default function QueryView({
             dbType={dbType}
             schema={schema}
             isDark={isDark}
+            appTheme={appTheme}
             onDatabaseChange={onDatabaseChange}
             inTransaction={inTransaction}
             onToggleTransaction={handleToggleTransaction}
@@ -410,6 +416,7 @@ export default function QueryView({
           onMongoDelete={onMongoDelete}
           onMongoRefresh={handleMongoRefresh}
           isDark={isDark}
+          appTheme={appTheme}
           totalRowCount={totalRowCount}
           totalRowCountLoading={totalRowCountLoading}
         />

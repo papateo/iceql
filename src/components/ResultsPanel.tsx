@@ -5,11 +5,12 @@ import { CheckCircle2, AlertCircle, Clock, Hash, Check, RotateCcw, Loader2, Penc
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { QueryResult } from "../types";
-import { buildUpdateStatements, buildDeleteStatements, formatSql } from "../utils/sql";
+import { buildUpdateStatements, buildDeleteStatements, formatSql, hasStableRowKey, NO_STABLE_ROW_KEY, assertSingleRowWrite } from "../utils/sql";
 import { buildMongoUpdatePreview } from "../utils/mongo";
 import SqlPreview from "./SqlPreview";
 import EditCellCtxMenu from "./EditCellCtxMenu";
 import { JsonDocCard, stringifyCellValue } from "./TableDataView";
+import type { AppTheme } from "./SettingsModal";
 
 interface Props {
   result: QueryResult | null;
@@ -33,6 +34,7 @@ interface Props {
   onMongoDelete: (collection: string, idJsons: string[]) => Promise<number>;
   onMongoRefresh: () => Promise<void>;
   isDark: boolean;
+  appTheme: AppTheme;
   // True row count behind a page the safety limit truncated — null when not applicable (the
   // query returned its full result already) or not yet known (background COUNT(*) in flight).
   totalRowCount?: number | null;
@@ -76,7 +78,7 @@ function displayValue(val: unknown) {
   );
 }
 
-export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh, isDark, totalRowCount, totalRowCountLoading }: Props) {
+export default function ResultsPanel({ result, error, loading, editableTable, dbType, database, rowIds, primaryKeys, columnDefaults, onCommit, onMongoUpdate, onMongoDelete, onMongoRefresh, isDark, appTheme, totalRowCount, totalRowCountLoading }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [edits, setEdits] = useState<Map<string, unknown>>(new Map());
   const [editingCell, setEditingCell] = useState<EditCell | null>(null);
@@ -99,6 +101,15 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
   // view for easier reading. Full CRUD on Redis lives in the key-group table view instead.
   const isRedis = dbType === "redis";
   const isJsonViewable = isMongo || isRedis;
+  const previewUpdateSql = () => {
+    try {
+      return buildUpdateStatements(dbType, database, editableTable!, columns, data, edits, rowIds ?? undefined, primaryKeys)
+        .map((sql) => formatSql(sql) + ";")
+        .join("\n\n");
+    } catch (e) {
+      return String(e);
+    }
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastClickedRow = useRef<number | null>(null);
@@ -407,6 +418,9 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
         affected = await onMongoDelete(editableTable, idJsons);
         await onMongoRefresh();
       } else {
+        if (!hasStableRowKey(primaryKeys, rowIds)) {
+          throw new Error(NO_STABLE_ROW_KEY);
+        }
         const indices = [...selectedRows].sort((a, b) => a - b);
         const sqls = buildDeleteStatements(dbType, database, editableTable, columns, data, indices, rowIds ?? undefined, primaryKeys);
         affected = await onCommit(sqls);
@@ -441,6 +455,9 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
         setCommitNotice({ ok: true, msg: `Updated ${edits.size} field${edits.size > 1 ? "s" : ""}` });
         await onMongoRefresh();
         return;
+      }
+      if (!hasStableRowKey(primaryKeys, rowIds)) {
+        throw new Error(NO_STABLE_ROW_KEY);
       }
       const sqls = buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys);
       const affected = await onCommit(sqls);
@@ -613,6 +630,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                 edited={rowHasEdits(rowIdx)}
                 editable={!!editableTable}
                 isDark={isDark}
+                appTheme={appTheme}
                 onFieldsChange={applyJsonFieldEdits}
                 onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
               />
@@ -739,9 +757,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
                   onClick={() => {
                     const text = isMongo
                       ? buildMongoUpdatePreview(editableTable, data, edits).join("\n\n")
-                      : buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
-                          .map((sql) => formatSql(sql) + ";")
-                          .join("\n\n");
+                      : previewUpdateSql();
                     navigator.clipboard.writeText(text);
                     setPreviewCopied(true);
                     setTimeout(() => setPreviewCopied(false), 1500);
@@ -766,9 +782,7 @@ export default function ResultsPanel({ result, error, loading, editableTable, db
               ) : (
                 <div className="bg-bg border border-border rounded p-2.5">
                   <SqlPreview
-                    value={buildUpdateStatements(dbType, database, editableTable, columns, data, edits, rowIds ?? undefined, primaryKeys)
-                      .map((sql) => formatSql(sql) + ";")
-                      .join("\n\n")}
+                    value={previewUpdateSql()}
                   />
                 </div>
               )}
