@@ -460,6 +460,9 @@ export default function TableDataView({
   // UI that's identical for either (JSON view, hiding SQL-only actions), while the actual
   // commit/delete logic below still dispatches per-type since the backend commands differ.
   const isDocStore = isMongo || isRedis;
+  // Identity fields stay locked. Changing a Redis key/type (or Mongo _id) would target a
+  // different object than the one we loaded — the same class of unsafe write the SQL
+  // primary-key guard exists to prevent.
   const readOnlyJsonFields = isRedis ? ["key", "type"] : ["_id"];
   // Schema default values for the open table, keyed by column name — powers "Set Default" in
   // the edit-cell context menu. Absent (undefined) when the sidebar hasn't loaded this table's
@@ -752,6 +755,9 @@ export default function TableDataView({
 
   const commitAll = async () => {
     if (!ac || !hasPendingChanges) return;
+    // Redis/Mongo address rows by key/_id through dedicated commands. Do not run them
+    // through the SQL PK/ctid guard — Redis has no primary keys, so that check would
+    // block every Redis commit even though the key column is already a stable identity.
     if (isMongo) return commitAllMongo();
     if (isRedis) return commitAllRedis();
     if (existingRowEdits.size > 0) {
@@ -828,6 +834,7 @@ export default function TableDataView({
 
   const handleDelete = async () => {
     if (!ac || selectedRows.size === 0) return;
+    // Same split as commit: Redis DEL uses the key name, not a SQL WHERE.
     if (isMongo) return handleDeleteMongo();
     if (isRedis) return handleDeleteRedis();
     // A pending new row has nothing in the DB to DELETE yet — drop it locally instead.

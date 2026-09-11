@@ -84,6 +84,9 @@ export const whiteTheme = createTheme({
   ],
 });
 
+// Shared by SqlEditor, RedisQueryEditor, MongoQueryEditor, and JSON cards.
+// `isDark` alone is not enough: White is a light theme with its own palette, so a
+// dracula-vs-lightTheme split would leave Redis/Mongo editors on the ice-blue theme.
 export function codeMirrorTheme(isDark: boolean, appTheme?: AppTheme) {
   if (isDark) return dracula;
   if (appTheme === "white") return whiteTheme;

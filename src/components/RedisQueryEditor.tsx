@@ -44,6 +44,8 @@ function redisCompletionSource(context: CompletionContext): CompletionResult | n
   return { from: word.from, options, filter: true };
 }
 
+// Layout only (transparent chrome + mono font). Syntax colors come from
+// `codeMirrorTheme` so White theme works here the same as in the SQL editor.
 const redisTheme = EditorView.theme({
   "&": { backgroundColor: "transparent !important", height: "100%" },
   ".cm-scroller": { fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: "13px", lineHeight: "1.6" },
