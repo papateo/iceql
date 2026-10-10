@@ -5,6 +5,36 @@ use sqlx::TypeInfo;
 use std::collections::HashSet;
 use std::time::Instant;
 
+/// MySQL 8 often reports identifier columns (`SHOW DATABASES`, `information_schema`)
+/// as VARBINARY. sqlx `Row::get::<String>` panics on that mismatch.
+fn mysql_str<'r, I>(row: &'r sqlx::mysql::MySqlRow, col: I) -> Result<String, String>
+where
+    I: sqlx::ColumnIndex<sqlx::mysql::MySqlRow> + Copy,
+{
+    use sqlx::Row;
+    if let Ok(s) = row.try_get::<String, _>(col) {
+        Ok(s)
+    } else if let Ok(b) = row.try_get::<Vec<u8>, _>(col) {
+        Ok(String::from_utf8_lossy(&b).into_owned())
+    } else {
+        Err("Could not decode MySQL text column".to_string())
+    }
+}
+
+fn mysql_str_opt<'r, I>(row: &'r sqlx::mysql::MySqlRow, col: I) -> Result<Option<String>, String>
+where
+    I: sqlx::ColumnIndex<sqlx::mysql::MySqlRow> + Copy,
+{
+    use sqlx::Row;
+    if let Ok(v) = row.try_get::<Option<String>, _>(col) {
+        return Ok(v);
+    }
+    if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) {
+        return Ok(v.map(|b| String::from_utf8_lossy(&b).into_owned()));
+    }
+    Ok(None)
+}
+
 #[derive(Clone)]
 pub enum ConnectionPool {
     Postgres(sqlx::PgPool, ConnectionConfig),
@@ -341,7 +371,8 @@ impl ConnectionPool {
                     .port(config.port)
                     .username(&config.username)
                     .password(&config.password)
-                    .database(&config.database);
+                    .database(&config.database)
+                    .ssl_mode(sqlx::mysql::MySqlSslMode::Disabled);
                 let pool = sqlx::MySqlPool::connect_with(options)
                     .await
                     .map_err(|e| format!("MySQL connection failed: {e}"))?;
@@ -495,13 +526,7 @@ impl ConnectionPool {
                     .fetch_all(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(rows
-                    .iter()
-                    .map(|r| {
-                        use sqlx::Row;
-                        r.get::<String, _>(0)
-                    })
-                    .collect())
+                rows.iter().map(|r| mysql_str(r, 0)).collect()
             }
             ConnectionPool::SQLite(_, _) => Ok(vec!["main".to_string()]),
             ConnectionPool::CSV(_, _) => Ok(vec!["csv".to_string()]),
@@ -562,16 +587,14 @@ impl ConnectionPool {
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(rows
-                    .iter()
+                rows.iter()
                     .map(|r| {
-                        use sqlx::Row;
-                        TableInfo {
-                            name: r.get("TABLE_NAME"),
-                            table_type: r.get("TABLE_TYPE"),
-                        }
+                        Ok(TableInfo {
+                            name: mysql_str(r, "TABLE_NAME")?,
+                            table_type: mysql_str(r, "TABLE_TYPE")?,
+                        })
                     })
-                    .collect())
+                    .collect()
             }
             ConnectionPool::SQLite(pool, _) => {
                 let rows = sqlx::query(
@@ -676,18 +699,16 @@ impl ConnectionPool {
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(rows
-                    .iter()
+                rows.iter()
                     .map(|r| {
-                        use sqlx::Row;
-                        ColumnInfo {
-                            name: r.get("COLUMN_NAME"),
-                            data_type: r.get("DATA_TYPE"),
-                            is_nullable: r.get::<String, _>("IS_NULLABLE") == "YES",
-                            column_default: r.get("COLUMN_DEFAULT"),
-                        }
+                        Ok(ColumnInfo {
+                            name: mysql_str(r, "COLUMN_NAME")?,
+                            data_type: mysql_str(r, "DATA_TYPE")?,
+                            is_nullable: mysql_str(r, "IS_NULLABLE")? == "YES",
+                            column_default: mysql_str_opt(r, "COLUMN_DEFAULT")?,
+                        })
                     })
-                    .collect())
+                    .collect()
             }
             ConnectionPool::SQLite(pool, _) | ConnectionPool::CSV(pool, _) => {
                 let query = format!("PRAGMA table_info(\"{table}\")");
@@ -803,8 +824,7 @@ impl ConnectionPool {
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                use sqlx::Row;
-                Ok(rows.iter().map(|r| r.get::<String, _>("COLUMN_NAME")).collect())
+                rows.iter().map(|r| mysql_str(r, "COLUMN_NAME")).collect()
             }
             ConnectionPool::SQLite(pool, _) => {
                 let query = format!("SELECT name FROM pragma_table_info('{table}') WHERE pk > 0 ORDER BY pk");
@@ -1381,52 +1401,6 @@ async fn execute_dml_mysql(pool: &sqlx::MySqlPool, query: &str, start: Instant) 
     })
 }
 
-async fn execute_dml_mysql_conn(conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, query: &str, start: Instant) -> Result<QueryResult, String> {
-    let result = sqlx::query(query)
-        .execute(&mut **conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(QueryResult {
-        columns: vec!["rows_affected".to_string()],
-        rows: vec![vec![serde_json::Value::Number(result.rows_affected().into())]],
-        row_count: result.rows_affected(),
-        execution_time_ms: start.elapsed().as_millis() as u64,
-    })
-}
-
-async fn execute_mysql_conn(conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, query: &str, start: Instant) -> Result<QueryResult, String> {
-    use sqlx::Row;
-    let rows = sqlx::query(query)
-        .fetch_all(&mut **conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    let elapsed = start.elapsed().as_millis() as u64;
-    if rows.is_empty() {
-        return Ok(QueryResult { columns: vec![], rows: vec![], row_count: 0, execution_time_ms: elapsed });
-    }
-    let columns: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
-    let mut result_rows = Vec::new();
-    for row in &rows {
-        let mut result_row = Vec::new();
-        for i in 0..row.columns().len() {
-            let val = if let Ok(v) = row.try_get::<i64, _>(i) {
-                serde_json::Value::Number(v.into())
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
-            } else if let Ok(v) = row.try_get::<bool, _>(i) {
-                serde_json::Value::Bool(v)
-            } else if let Ok(v) = row.try_get::<String, _>(i) {
-                serde_json::Value::String(v)
-            } else {
-                serde_json::Value::Null
-            };
-            result_row.push(val);
-        }
-        result_rows.push(result_row);
-    }
-    Ok(QueryResult { columns, row_count: result_rows.len() as u64, rows: result_rows, execution_time_ms: elapsed })
-}
-
 async fn execute_dml_sqlite(pool: &sqlx::SqlitePool, query: &str, start: Instant) -> Result<QueryResult, String> {
     let result = sqlx::query(query)
         .execute(pool)
@@ -1575,6 +1549,8 @@ async fn execute_mysql(
                 serde_json::Value::Bool(v)
             } else if let Ok(v) = row.try_get::<String, _>(i) {
                 serde_json::Value::String(v)
+            } else if let Ok(v) = row.try_get::<Vec<u8>, _>(i) {
+                serde_json::Value::String(String::from_utf8_lossy(&v).into_owned())
             } else {
                 serde_json::Value::Null
             };

@@ -27,14 +27,14 @@ import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
 import * as XLSX from "xlsx";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
-import { dracula } from "@uiw/codemirror-theme-dracula";
 import { EditorView } from "@codemirror/view";
 import type { ActiveConnection, QueryLog, QueryResult } from "../types";
-import { tableRef, buildUpdateStatements, buildDeleteStatements, buildInsertStatements, sqlLiteral, quoteIdent } from "../utils/sql";
+import { tableRef, buildUpdateStatements, buildDeleteStatements, buildInsertStatements, sqlLiteral, quoteIdent, hasStableRowKey, NO_STABLE_ROW_KEY, assertSingleRowWrite } from "../utils/sql";
 import { buildMongoUpdatePreview } from "../utils/mongo";
 import { buildRedisUpdatePreview } from "../utils/redis";
 import EditCellCtxMenu from "./EditCellCtxMenu";
-import { lightTheme } from "./SqlEditor";
+import { codeMirrorTheme } from "./SqlEditor";
+import type { AppTheme } from "./SettingsModal";
 
 // Transparent background + compact font, sized by content (via CodeMirror's maxHeight prop)
 // rather than filling its parent — unlike SqlEditor's customTheme, which forces height:100%
@@ -55,6 +55,7 @@ interface Props {
   infiniteScroll: boolean;
   onInfiniteScrollChange: (value: boolean) => void;
   isDark: boolean;
+  appTheme: AppTheme;
 }
 
 interface EditCell {
@@ -137,7 +138,7 @@ export function highlightJson(value: unknown): string {
 }
 
 export function JsonDocCard({
-  doc, index, selected, edited, onToggleSelect, editable, onFieldsChange, isDark, readOnlyFields = ["_id"],
+  doc, index, selected, edited, onToggleSelect, editable, onFieldsChange, isDark, appTheme, readOnlyFields = ["_id"],
 }: {
   doc: Record<string, unknown>;
   index: number;
@@ -152,6 +153,7 @@ export function JsonDocCard({
   editable?: boolean;
   onFieldsChange?: (rowIdx: number, changes: Record<string, unknown>) => void;
   isDark?: boolean;
+  appTheme?: AppTheme;
   // Top-level keys excluded from the diff/edit — Mongo's "_id" by default, or Redis's
   // "key"/"type" (both fixed; changing either means a different key or structure entirely).
   readOnlyFields?: string[];
@@ -260,7 +262,7 @@ export function JsonDocCard({
             <CodeMirror
               value={text}
               onChange={setText}
-              theme={isDark ? dracula : lightTheme}
+              theme={codeMirrorTheme(!!isDark, appTheme)}
               extensions={[json(), jsonCardTheme]}
               maxHeight="500px"
               basicSetup={{
@@ -300,6 +302,7 @@ export default function TableDataView({
   infiniteScroll,
   onInfiniteScrollChange,
   isDark,
+  appTheme,
 }: Props) {
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -317,7 +320,7 @@ export default function TableDataView({
   const [newRowIndex, setNewRowIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const [primaryKeys, setPrimaryKeys] = useState<string[]>([]);
+  const [primaryKeys, setPrimaryKeys] = useState<string[] | null>(null);
   const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
@@ -457,6 +460,9 @@ export default function TableDataView({
   // UI that's identical for either (JSON view, hiding SQL-only actions), while the actual
   // commit/delete logic below still dispatches per-type since the backend commands differ.
   const isDocStore = isMongo || isRedis;
+  // Identity fields stay locked. Changing a Redis key/type (or Mongo _id) would target a
+  // different object than the one we loaded — the same class of unsafe write the SQL
+  // primary-key guard exists to prevent.
   const readOnlyJsonFields = isRedis ? ["key", "type"] : ["_id"];
   // Schema default values for the open table, keyed by column name — powers "Set Default" in
   // the edit-cell context menu. Absent (undefined) when the sidebar hasn't loaded this table's
@@ -487,7 +493,7 @@ export default function TableDataView({
     setSelectedRows(new Set());
     setRows([]);
     setLoadedPages(0);
-    // Fetch primary keys once per table load (fire-and-forget; doesn't block data load)
+    setPrimaryKeys(null);
     invoke<string[]>("get_primary_keys", { connectionId: ac.connectionId, database, table })
       .then((pks) => setPrimaryKeys(pks))
       .catch(() => setPrimaryKeys([]));
@@ -674,12 +680,20 @@ export default function TableDataView({
   }, [edits, newRowIndex]);
 
   const buildUpdateSQL = (): string[] =>
-    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, existingRowEdits, undefined, primaryKeys);
+    buildUpdateStatements(ac?.config.db_type, database, table, columns, rows, existingRowEdits, undefined, primaryKeys ?? undefined);
 
   const buildInsertSQL = (): string[] =>
     newRowIndex === null
       ? []
       : buildInsertStatements(ac?.config.db_type, database, table, rows, edits, [newRowIndex]);
+
+  const previewSqlText = (): string => {
+    try {
+      return [...buildInsertSQL(), ...buildUpdateSQL()].join(";\n\n");
+    } catch (e) {
+      return String(e);
+    }
+  };
 
   const buildMongoPreview = (): string[] => buildMongoUpdatePreview(table, rows, edits);
   const buildRedisPreview = (): string[] => buildRedisUpdatePreview(rows, edits);
@@ -741,14 +755,28 @@ export default function TableDataView({
 
   const commitAll = async () => {
     if (!ac || !hasPendingChanges) return;
+    // Redis/Mongo address rows by key/_id through dedicated commands. Do not run them
+    // through the SQL PK/ctid guard — Redis has no primary keys, so that check would
+    // block every Redis commit even though the key column is already a stable identity.
     if (isMongo) return commitAllMongo();
     if (isRedis) return commitAllRedis();
+    if (existingRowEdits.size > 0) {
+      if (primaryKeys === null) {
+        setError("Still loading primary keys — wait a moment, then Commit again.");
+        return;
+      }
+      if (!hasStableRowKey(primaryKeys)) {
+        setError(NO_STABLE_ROW_KEY);
+        return;
+      }
+    }
     const sqls = [...buildInsertSQL(), ...buildUpdateSQL()];
     setLoading(true);
     setError(null);
     try {
       for (const sql of sqls) {
         const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql, queryId: uuidv4() });
+        assertSingleRowWrite(sql, (res as QueryResult).row_count);
         addLog({ sql, connectionName: ac.config.name, database, status: "success", rowsAffected: (res as QueryResult).row_count, executionTimeMs: (res as QueryResult).execution_time_ms });
       }
       await fetchInitial();
@@ -806,6 +834,7 @@ export default function TableDataView({
 
   const handleDelete = async () => {
     if (!ac || selectedRows.size === 0) return;
+    // Same split as commit: Redis DEL uses the key name, not a SQL WHERE.
     if (isMongo) return handleDeleteMongo();
     if (isRedis) return handleDeleteRedis();
     // A pending new row has nothing in the DB to DELETE yet — drop it locally instead.
@@ -816,12 +845,19 @@ export default function TableDataView({
       setShowDeleteConfirm(false);
       return;
     }
-    const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices, undefined, primaryKeys);
     setDeleting(true);
     setError(null);
     try {
+      if (primaryKeys === null) {
+        throw new Error("Still loading primary keys — wait a moment, then delete again.");
+      }
+      if (!hasStableRowKey(primaryKeys)) {
+        throw new Error(NO_STABLE_ROW_KEY);
+      }
+      const sqls = buildDeleteStatements(dbType, database, table, columns, rows, indices, undefined, primaryKeys);
       for (const sql of sqls) {
         const res = await invoke<QueryResult>("execute_query", { connectionId: ac.connectionId, database, query: sql, queryId: uuidv4() });
+        assertSingleRowWrite(sql, (res as QueryResult).row_count);
         addLog({ sql, connectionName: ac.config.name, database, status: "success", rowsAffected: (res as QueryResult).row_count, executionTimeMs: (res as QueryResult).execution_time_ms });
       }
       setSelectedRows(new Set());
@@ -1243,6 +1279,7 @@ export default function TableDataView({
                   editable
                   readOnlyFields={readOnlyJsonFields}
                   isDark={isDark}
+                  appTheme={appTheme}
                   onFieldsChange={applyJsonFieldEdits}
                   onToggleSelect={(e) => handleRowMouseDown(e, rowIdx)}
                 />
@@ -1568,13 +1605,13 @@ export default function TableDataView({
                 <Eye size={14} className="text-highlight" />
                 <span className="text-sm font-semibold text-text-primary">{isDocStore ? "Preview changes" : "Preview SQL"}</span>
                 <span className="text-text-muted text-xs">
-                  — {[...buildInsertSQL(), ...buildUpdateSQL()].length || edits.size} statement{([...buildInsertSQL(), ...buildUpdateSQL()].length || edits.size) === 1 ? "" : "s"}
+                  — {isDocStore ? edits.size : previewSqlText().split(";").filter(Boolean).length} statement{(isDocStore ? edits.size : previewSqlText().split(";").filter(Boolean).length) === 1 ? "" : "s"}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    const text = isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : [...buildInsertSQL(), ...buildUpdateSQL()].join(";\n");
+                    const text = isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : previewSqlText().replace(/\n\n/g, ";\n");
                     navigator.clipboard.writeText(text);
                     setPreviewCopied(true);
                     setTimeout(() => setPreviewCopied(false), 1500);
@@ -1587,7 +1624,7 @@ export default function TableDataView({
               </div>
             </div>
             <pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-all">
-              {isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : [...buildInsertSQL(), ...buildUpdateSQL()].join(";\n\n")}
+              {isMongo ? buildMongoPreview().join("\n\n") : isRedis ? buildRedisPreview().join("\n\n") : previewSqlText()}
             </pre>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-border flex-shrink-0">
               <button onClick={() => setShowSqlPreview(false)} className="px-3 py-1.5 rounded text-xs text-text-secondary hover:bg-accent hover:text-text-primary transition-colors">Close</button>

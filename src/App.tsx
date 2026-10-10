@@ -39,16 +39,18 @@ export default function App() {
   });
 
   const DARK_THEMES = new Set(["charcoal", "ocean", "midnight", "nord"]);
-  const isDark = DARK_THEMES.has(settings.theme ?? "charcoal");
+  const VALID_THEMES = new Set(["charcoal", "ocean", "midnight", "nord", "light", "white", "sepia"]);
+  const activeTheme = VALID_THEMES.has(settings.theme ?? "") ? settings.theme! : "charcoal";
+  const isDark = DARK_THEMES.has(activeTheme);
 
   useEffect(() => {
-    const { theme = "charcoal", fontSize = "md" } = settings;
+    const { fontSize = "md" } = settings;
     const root = document.documentElement;
-    root.setAttribute("data-theme", theme);
+    root.setAttribute("data-theme", activeTheme);
     const px: Record<string, string> = { sm: "12px", md: "14px", lg: "16px", xl: "18px" };
     root.style.fontSize = px[fontSize] ?? "14px";
     localStorage.setItem("iceql-settings", JSON.stringify(settings));
-  }, [settings]);
+  }, [settings, activeTheme]);
   const [dragging, setDragging] = useState(false);
   const [editTableTarget, setEditTableTarget] = useState<EditTableTarget | null>(null);
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
@@ -285,6 +287,7 @@ export default function App() {
         infiniteScroll={tableSettings[tab.id]?.infiniteScroll ?? false}
         onInfiniteScrollChange={(value) => updateTableSetting(tab.id, { infiniteScroll: value })}
         isDark={isDark}
+        appTheme={activeTheme}
       />
     ) : tab.type === "mqtt-topic" ? (
       <MqttTopicView
@@ -304,6 +307,7 @@ export default function App() {
         schema={buildSqlSchema(store.activeConnections.get(tab.connectionId), tab.database)}
         dbColumns={store.activeConnections.get(tab.connectionId)?.dbColumns ?? {}}
         isDark={isDark}
+        appTheme={activeTheme}
         queryRowLimit={settings.queryRowLimit ?? DEFAULT_QUERY_ROW_LIMIT}
         onLoadSchema={() => store.loadSchemaForDb(tab.connectionId, tab.database)}
         onDatabaseChange={(db) => store.updateTabDatabase(tab.id, db)}
@@ -347,16 +351,14 @@ export default function App() {
         <button
           onClick={() => setShowConnManager(true)}
           title="Manage connections"
-          className="w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:text-highlight hover:bg-accent/50 transition-colors"
+          className="w-10 h-10 flex items-center justify-center rounded-lg text-text-secondary hover:text-highlight hover:bg-accent/50 transition-colors"
         >
           <Plus size={18} />
         </button>
-
-        {/* Settings pinned to the bottom of the rail */}
         <button
           onClick={() => setShowSettings(true)}
           title="Settings"
-          className="mt-auto w-10 h-10 flex items-center justify-center rounded-lg text-text-muted hover:text-highlight hover:bg-accent/50 transition-colors"
+          className="w-10 h-10 flex items-center justify-center rounded-lg text-text-secondary hover:text-highlight hover:bg-accent/50 transition-colors"
         >
           <Settings size={18} />
         </button>
@@ -457,6 +459,14 @@ export default function App() {
               splitTabId={splitTabId}
             />
           </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+            className="flex items-center gap-1.5 px-3 py-1.5 my-1.5 text-xs rounded-lg flex-shrink-0 text-text-secondary hover:text-text-primary hover:bg-accent/50 transition-colors"
+          >
+            <Settings size={14} />
+            <span className="font-medium">Settings</span>
+          </button>
           <button
             onClick={() => setShowLogs((v) => !v)}
             title="SQL Query Logs"
@@ -596,7 +606,7 @@ export default function App() {
       </div>
       {showSettings && (
         <SettingsModal
-          settings={{ theme: settings.theme ?? "dark", fontSize: settings.fontSize ?? "md", queryRowLimit: settings.queryRowLimit }}
+          settings={{ theme: activeTheme, fontSize: settings.fontSize ?? "md", queryRowLimit: settings.queryRowLimit }}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
         />

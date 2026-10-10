@@ -1,13 +1,13 @@
 import { useRef, useCallback, useMemo, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { dracula } from "@uiw/codemirror-theme-dracula";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { autocompletion, type CompletionContext, type CompletionResult, type Completion } from "@codemirror/autocomplete";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Play, Loader2, Database, Square, Scissors, Copy, Clipboard } from "lucide-react";
 import ContextMenu from "./ContextMenu";
-import { lightTheme } from "./SqlEditor";
+import { codeMirrorTheme } from "./SqlEditor";
+import type { AppTheme } from "./SettingsModal";
 
 interface Props {
   value: string;
@@ -18,6 +18,7 @@ interface Props {
   database: string;
   databases: string[];
   isDark: boolean;
+  appTheme?: AppTheme;
   onDatabaseChange: (db: string) => void;
 }
 
@@ -43,6 +44,8 @@ function redisCompletionSource(context: CompletionContext): CompletionResult | n
   return { from: word.from, options, filter: true };
 }
 
+// Layout only (transparent chrome + mono font). Syntax colors come from
+// `codeMirrorTheme` so White theme works here the same as in the SQL editor.
 const redisTheme = EditorView.theme({
   "&": { backgroundColor: "transparent !important", height: "100%" },
   ".cm-scroller": { fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: "13px", lineHeight: "1.6" },
@@ -52,7 +55,7 @@ const selectClass =
   "appearance-none bg-accent/60 border border-border rounded-lg text-xs text-text-secondary pl-7 pr-6 py-1.5 outline-none focus:border-highlight hover:bg-accent transition-colors cursor-pointer";
 
 export default function RedisQueryEditor({
-  value, onChange, onRun, running, onCancel, database, databases, isDark, onDatabaseChange,
+  value, onChange, onRun, running, onCancel, database, databases, isDark, appTheme, onDatabaseChange,
 }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
 
@@ -165,7 +168,7 @@ export default function RedisQueryEditor({
           ref={editorRef as never}
           value={value}
           onChange={onChange}
-          theme={isDark ? dracula : lightTheme}
+          theme={codeMirrorTheme(isDark, appTheme)}
           extensions={extensions}
           style={{ height: "100%" }}
           placeholder={"GET mykey\nHGETALL myhash"}

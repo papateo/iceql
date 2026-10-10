@@ -11,6 +11,7 @@ import { syntaxTree } from "@codemirror/language";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Play, Loader2, Database, GitBranch, Check, X, Scissors, Copy, Clipboard, Square } from "lucide-react";
 import ContextMenu from "./ContextMenu";
+import type { AppTheme } from "./SettingsModal";
 
 interface Props {
   value: string;
@@ -23,6 +24,7 @@ interface Props {
   dbType: string;
   schema: Record<string, string[]>;
   isDark: boolean;
+  appTheme?: AppTheme;
   onDatabaseChange: (db: string) => void;
   inTransaction: boolean;
   onToggleTransaction: () => void;
@@ -55,6 +57,41 @@ export const lightTheme = createTheme({
     { tag: t.function(t.name), color: "#0369a1" },
   ],
 });
+
+export const whiteTheme = createTheme({
+  theme: "light",
+  settings: {
+    background: "#ffffff",
+    foreground: "#171717",
+    caret: "#2563eb",
+    selection: "rgba(37, 99, 235, 0.18)",
+    selectionMatch: "rgba(37, 99, 235, 0.10)",
+    lineHighlight: "rgba(37, 99, 235, 0.05)",
+    gutterBackground: "#f7f7f7",
+    gutterForeground: "#a3a3a3",
+    gutterBorder: "#e5e5e5",
+  },
+  styles: [
+    { tag: t.keyword, color: "#0369a1", fontWeight: "bold" },
+    { tag: t.string, color: "#15803d" },
+    { tag: t.number, color: "#b45309" },
+    { tag: t.comment, color: "#6b8fa8", fontStyle: "italic" },
+    { tag: t.operator, color: "#0c1c2e" },
+    { tag: t.punctuation, color: "#374151" },
+    { tag: t.name, color: "#1e3a5f" },
+    { tag: t.typeName, color: "#7c3aed" },
+    { tag: t.function(t.name), color: "#0369a1" },
+  ],
+});
+
+// Shared by SqlEditor, RedisQueryEditor, MongoQueryEditor, and JSON cards.
+// `isDark` alone is not enough: White is a light theme with its own palette, so a
+// dracula-vs-lightTheme split would leave Redis/Mongo editors on the ice-blue theme.
+export function codeMirrorTheme(isDark: boolean, appTheme?: AppTheme) {
+  if (isDark) return dracula;
+  if (appTheme === "white") return whiteTheme;
+  return lightTheme;
+}
 
 function dialectFor(dbType: string): SQLDialect {
   if (dbType === "postgresql") return PostgreSQL;
@@ -118,7 +155,7 @@ export const customTheme = EditorView.theme({
   },
 });
 
-export default function SqlEditor({ value, onChange, onRun, running, onCancel, database, databases, dbType, schema, isDark, onDatabaseChange, inTransaction, onToggleTransaction, onCommitTransaction, onRollbackTransaction }: Props) {
+export default function SqlEditor({ value, onChange, onRun, running, onCancel, database, databases, dbType, schema, isDark, appTheme, onDatabaseChange, inTransaction, onToggleTransaction, onCommitTransaction, onRollbackTransaction }: Props) {
   const editorRef = useRef<{ view?: EditorView } | null>(null);
 
   const sqlCompartment = useMemo(() => new Compartment(), []);
@@ -315,7 +352,7 @@ export default function SqlEditor({ value, onChange, onRun, running, onCancel, d
           ref={editorRef as never}
           value={value}
           onChange={onChange}
-          theme={isDark ? dracula : lightTheme}
+          theme={codeMirrorTheme(isDark, appTheme)}
           extensions={[sqlCompartment.of(makeSqlExt()), customTheme, runExtension]}
           style={{ height: "100%" }}
           basicSetup={{
